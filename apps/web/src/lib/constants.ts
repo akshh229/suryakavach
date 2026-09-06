@@ -101,4 +101,4 @@ export const REPLAY = {
 
 // API base
 export const API_BASE = '/api';
-export const WS_URL = `ws://${window.location.host}/ws/live`;
+export const WS_URL = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/live`;
