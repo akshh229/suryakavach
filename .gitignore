@@ -12,6 +12,9 @@ dist/
 .coverage
 htmlcov/
 .env
+.env.local
+*.sqlite
+*.db
 models/*.pt
 apps/web/playwright-report/
 apps/web/test-results/

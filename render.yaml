@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: suryakavach-api
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: backend/Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: USE_SUPABASE
+        value: "1"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false

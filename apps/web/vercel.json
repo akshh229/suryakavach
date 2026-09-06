@@ -1,0 +1,14 @@
+{
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "https://suryakavach-api.onrender.com/api/$1" },
+    { "source": "/ws/live", "destination": "wss://suryakavach-api.onrender.com/ws/live" }
+  ],
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" }
+      ]
+    }
+  ]
+}

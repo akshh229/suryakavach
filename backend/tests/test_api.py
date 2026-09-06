@@ -30,7 +30,7 @@ def test_nowcast_state():
     assert response.status_code == 200
     json_data = response.json()
     assert "state" in json_data["data"]
-    assert "events" in json_data["data"]
+    assert "active" in json_data["data"]
 
 
 def test_catalogue_endpoints():
@@ -94,4 +94,4 @@ def test_replay_controls():
 def test_ws_live():
     with client.websocket_connect("/ws/live") as websocket:
         data = websocket.receive_json()
-        assert "timestamp" in data or "data" in data or "solexs" in data or "meta" in data
+        assert "clock" in data or "nowcast_state" in data
