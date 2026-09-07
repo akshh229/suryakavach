@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 
 def test_health_endpoint(client):
     response = client.get("/api/health")
@@ -20,7 +18,7 @@ def test_streams_latest(client):
     assert "hel1os" in json_data["data"]
 
 
-def test_nowcast_state():
+def test_nowcast_state(client):
     response = client.get("/api/nowcast/state")
     assert response.status_code == 200
     json_data = response.json()
@@ -28,7 +26,7 @@ def test_nowcast_state():
     assert "active" in json_data["data"]
 
 
-def test_catalogue_endpoints():
+def test_catalogue_endpoints(client):
     # JSON
     res_json = client.get("/api/flare/catalogue?format=json")
     assert res_json.status_code == 200
@@ -53,7 +51,7 @@ def test_catalogue_endpoints():
     assert res_404.status_code == 404
 
 
-def test_forecast_and_impact():
+def test_forecast_and_impact(client):
     res_fc = client.get("/api/forecast/horizons")
     assert res_fc.status_code == 200
     assert "horizons" in res_fc.json()["data"]
@@ -63,7 +61,7 @@ def test_forecast_and_impact():
     assert "index" in res_imp.json()["data"]
 
 
-def test_replay_controls():
+def test_replay_controls(client):
     res_dates = client.get("/api/replay/dates")
     assert res_dates.status_code == 200
     assert "dates" in res_dates.json()["data"]
@@ -86,36 +84,36 @@ def test_replay_controls():
     assert res_stop.status_code == 200
 
 
-def _control(**body):
+def _control(client, **body):
     res = client.post("/api/replay/control", json=body)
     return res, res.json()
 
 
-def test_replay_control_actions():
+def test_replay_control_actions(client):
     """Every action returns the full canonical replay state."""
-    res, payload = _control(action="status")
+    res, payload = _control(client, action="status")
     assert res.status_code == 200
     for key in ("playing", "speed", "cursor_idx", "cursor", "event_date", "mode"):
         assert key in payload["data"], f"missing {key} in replay state"
 
-    _, paused = _control(action="pause")
+    _, paused = _control(client, action="pause")
     assert paused["data"]["playing"] is False
 
-    _, played = _control(action="play")
+    _, played = _control(client, action="play")
     assert played["data"]["playing"] is True
 
-    _, toggled = _control(action="toggle")
+    _, toggled = _control(client, action="toggle")
     assert toggled["data"]["playing"] is False
 
-    _, seeked = _control(action="seek", cursor=600)
+    _, seeked = _control(client, action="seek", cursor=600)
     assert seeked["data"]["cursor_idx"] == 600
     assert seeked["data"]["cursor"].endswith("T10:00:00Z")
 
-    _, sped = _control(action="speed", speed=5)
+    _, sped = _control(client, action="speed", speed=5)
     assert sped["data"]["speed"] == 5.0
 
     # speed/cursor may accompany any action
-    _, combo = _control(action="play", speed=20, cursor=300)
+    _, combo = _control(client, action="play", speed=20, cursor=300)
     assert combo["data"] == {
         **combo["data"],
         "playing": True,
@@ -123,35 +121,35 @@ def test_replay_control_actions():
         "cursor_idx": 300,
     }
 
-    _, stopped = _control(action="stop")
+    _, stopped = _control(client, action="stop")
     assert stopped["data"]["playing"] is False
 
 
-def test_replay_control_validation():
+def test_replay_control_validation(client):
     # Actions requiring a parameter must reject its absence.
-    assert _control(action="seek")[0].status_code == 400
-    assert _control(action="speed")[0].status_code == 400
+    assert _control(client, action="seek")[0].status_code == 400
+    assert _control(client, action="speed")[0].status_code == 400
     # Out-of-range and unknown values are rejected by the schema.
-    assert _control(action="bogus")[0].status_code == 422
-    assert _control(action="speed", speed=999)[0].status_code == 422
-    assert _control(action="speed", speed=0)[0].status_code == 422
-    assert _control(action="seek", cursor=99999)[0].status_code == 422
-    assert _control(action="seek", cursor=-1)[0].status_code == 422
+    assert _control(client, action="bogus")[0].status_code == 422
+    assert _control(client, action="speed", speed=999)[0].status_code == 422
+    assert _control(client, action="speed", speed=0)[0].status_code == 422
+    assert _control(client, action="seek", cursor=99999)[0].status_code == 422
+    assert _control(client, action="seek", cursor=-1)[0].status_code == 422
 
 
-def test_replay_control_speeds_match_config():
+def test_replay_control_speeds_match_config(client):
     """Every speed the config advertises must be accepted by the API."""
     from suryakavach.config import load_config
 
     for speed in load_config()["replay"]["speeds"]:
-        res, payload = _control(action="speed", speed=speed)
+        res, payload = _control(client, action="speed", speed=speed)
         assert res.status_code == 200, f"speed {speed} rejected"
         assert payload["data"]["speed"] == float(speed)
 
 
-def test_legacy_replay_routes_return_state():
+def test_legacy_replay_routes_return_state(client):
     """pause/resume delegate to control and return the full state."""
-    _, paused = _control(action="play")
+    _, paused = _control(client, action="play")
     res = client.post("/api/replay/pause")
     assert res.status_code == 200
     assert res.json()["data"]["playing"] is False
@@ -162,7 +160,7 @@ def test_legacy_replay_routes_return_state():
     assert res.json()["data"]["playing"] is True
 
 
-def test_ws_live():
+def test_ws_live(client):
     with client.websocket_connect("/ws/live") as websocket:
         data = websocket.receive_json()
         assert "clock" in data or "nowcast_state" in data
