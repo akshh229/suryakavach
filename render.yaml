@@ -2,7 +2,9 @@ services:
   - type: web
     name: suryakavach-api
     runtime: docker
+    plan: free
     dockerfilePath: backend/Dockerfile
+    dockerContext: .
     envVars:
       - key: USE_SUPABASE
         value: "1"

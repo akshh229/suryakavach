@@ -1,0 +1,37 @@
+# Build context for backend/Dockerfile is the repo root.
+# Only backend/requirements.txt, backend/suryakavach and config.yaml are needed.
+
+.git
+.gitignore
+.env
+.env.*
+.claude
+
+# Frontend is built separately (apps/web/Dockerfile uses ./apps/web as its context)
+apps
+node_modules
+**/node_modules
+**/dist
+
+# Python caches / local artifacts
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+.venv
+venv
+*.egg-info
+.coverage
+htmlcov
+
+# Local data + generated output (not needed in the image)
+data
+backend/data
+backend/reports
+backend/tests
+**/*.sqlite
+**/*.db
+
+# Docs / compose / misc
+README.md
+docker-compose.yml
+composio-mcp.ts
