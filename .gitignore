@@ -18,3 +18,11 @@ htmlcov/
 models/*.pt
 apps/web/playwright-report/
 apps/web/test-results/
+
+# TypeScript incremental build caches (churn on every build)
+*.tsbuildinfo
+apps/web/dist-tsconfig-node/
+
+# One-off deploy payload dumps, not build inputs
+apps/web/deploy_args.json
+apps/web/deploy_payload.json
