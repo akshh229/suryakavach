@@ -1,140 +1,254 @@
-import { useState } from 'react';
-import { Database, Download, ChevronRight, X } from 'lucide-react';
+import { Download } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
+import { Plot } from '../lib/plotly';
 import { api } from '../lib/api';
-import type { CatalogueData, CatalogueFlare } from '../types/api';
-import { goesClassColor } from '../lib/constants';
+import Panel from './ui/Panel';
+import Metric from './ui/Metric';
+import type { CatalogueData, FlareDetail } from '../types/api';
+import { goesClassColor, SERIES_COLORS, CHART_COLORS } from '../lib/constants';
+import { useRouter, isModifiedClick, catalogueUrl } from '../lib/router';
+import { detailSlide, usePrefersReducedMotion } from '../lib/motion';
 
 const FILTERS = ['ALL', 'X', 'M', 'C', 'B'] as const;
 
+function fmtTs(ts: string | null | undefined): string {
+  return ts ? ts.replace('T', ' ').replace('Z', '') : '—';
+}
+
+/** Detail pane: time series, impact breakdown, confidence — driven by the URL. */
+function FlareDetailPane({ flare, minClass }: { flare: FlareDetail; minClass: string }) {
+  const { go } = useRouter();
+  const clsColor = goesClassColor(flare.peak_flux_sxr);
+  const series = flare.series;
+
+  const solexsX = series?.solexs.map((d) => d.t) ?? [];
+  const solexsY = series?.solexs.map((d) => (d.v && d.v > 0 ? d.v : 1e-9));
+  const hel1osX = series?.hel1os.map((d) => d.t) ?? [];
+  const hel1osY = series?.hel1os.map((d) => (d.v && d.v > 0 ? d.v : 1e-10));
+  const postX = series?.posterior.map((d) => d.t) ?? [];
+  const postY = series?.posterior.map((d) => d.v ?? 0);
+
+  return (
+    <div className="mt-4 border border-rule">
+      <div className="flex flex-wrap items-center gap-4 px-4 py-3 border-b border-rule bg-accent-wash/50">
+        <a
+          href={catalogueUrl(null, minClass)}
+          onClick={(e) => {
+            if (isModifiedClick(e)) return;
+            e.preventDefault();
+            go(catalogueUrl(null, minClass));
+          }}
+          className="text-[11px] font-mono-val text-accent hover:underline"
+        >
+          ← All flares
+        </a>
+        <div className="flex items-baseline gap-3">
+          <span className="text-lg font-bold font-mono-val" style={{ color: clsColor }}>
+            {flare.class}
+          </span>
+          <span className="text-sm font-semibold">{flare.id}</span>
+        </div>
+        <span className="ml-auto text-[11px] font-mono-val text-ink-muted">
+          ONSET {fmtTs(flare.onset)} · PEAK {fmtTs(flare.peak)}
+        </span>
+      </div>
+
+      {solexsX.length > 0 && (
+        <div className="border-b border-rule p-3" style={{ height: 320 }}>
+          <Plot
+            data={[
+              { x: solexsX, y: solexsY, type: 'scatter', mode: 'lines', name: 'SoLEXS SXR', line: { color: SERIES_COLORS.sxr, width: 1.8 }, yaxis: 'y' },
+              { x: hel1osX, y: hel1osY, type: 'scatter', mode: 'lines', name: 'HEL1OS HXR', line: { color: SERIES_COLORS.hxr, width: 1.5 }, yaxis: 'y2' },
+              { x: postX, y: postY, type: 'scatter', mode: 'lines', name: 'BOCPD P(CP)', line: { color: SERIES_COLORS.posterior, width: 1.2, dash: 'dash' }, yaxis: 'y3' },
+            ]}
+            layout={{
+              autosize: true,
+              margin: { l: 56, r: 76, t: 16, b: 36 },
+              paper_bgcolor: 'rgba(0,0,0,0)',
+              plot_bgcolor: CHART_COLORS.plotBg,
+              font: { family: 'JetBrains Mono, monospace', size: 10, color: '#5c6066' },
+              xaxis: { gridcolor: CHART_COLORS.grid },
+              yaxis: { type: 'log', range: [-8, -3], title: { text: 'SXR W/m²', font: { color: SERIES_COLORS.sxr } }, tickfont: { color: SERIES_COLORS.sxr }, gridcolor: CHART_COLORS.grid },
+              yaxis2: { type: 'log', range: [-10, -4], title: { text: 'HXR W/m²', font: { color: SERIES_COLORS.hxr } }, tickfont: { color: SERIES_COLORS.hxr }, overlaying: 'y', side: 'right', showgrid: false },
+              yaxis3: { range: [0, 1], title: { text: 'P(CP)', font: { color: SERIES_COLORS.posterior } }, tickfont: { color: SERIES_COLORS.posterior }, overlaying: 'y', side: 'right', position: 0.96, showgrid: false },
+              showlegend: true, legend: { orientation: 'h', y: 1.12 },
+            } as unknown as Partial<Plotly.Layout>}
+            config={{ displayModeBar: false, responsive: true }}
+            style={{ width: '100%', height: '100%' }}
+            useResizeHandler
+          />
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4">
+        <Metric label="SXR peak" value={flare.peak_flux_sxr?.toExponential(3) ?? '—'} unit="W/m²" tone={SERIES_COLORS.sxr} />
+        <Metric label="HXR peak" value={flare.peak_flux_hxr?.toExponential(3) ?? '—'} unit="W/m²" tone={SERIES_COLORS.hxr} />
+        <Metric label="Hardness" value={flare.hardness?.toFixed(3) ?? '—'} />
+        <Metric label="Impulsivity" value={flare.impulsivity?.toFixed(2) ?? '—'} />
+        <Metric label="Impact index" value={flare.impact_index?.toFixed(2) ?? '—'} unit="/ 10" />
+        <Metric label="R-level" value={flare.r_level ?? '—'} />
+        <Metric label="Detection" value={flare.detection_method ?? '—'} />
+        <Metric label="Posterior" value={flare.posterior?.toFixed(3) ?? '—'} />
+      </div>
+
+      {flare.subscores && (
+        <div className="px-4 pb-4">
+          <div className="text-[10px] uppercase tracking-[0.12em] text-ink-faint mb-2">Impact subscores</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <Metric label="Peak SXR" value={flare.subscores.peak_sxr.toFixed(3)} />
+            <Metric label="Hardness" value={flare.subscores.hardness.toFixed(3)} />
+            <Metric label="Impulsivity" value={flare.subscores.impulsivity.toFixed(3)} />
+            <Metric label="Duration" value={flare.subscores.duration.toFixed(3)} />
+          </div>
+        </div>
+      )}
+
+      {flare.confidence && (
+        <p className="px-4 pb-4 text-xs font-mono-val text-ink-muted border-t border-rule pt-3 -mt-1">
+          {flare.confidence}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function FlareCatalogue() {
-  const [filterClass, setFilterClass] = useState<string>('ALL');
-  const [selectedFlare, setSelectedFlare] = useState<CatalogueFlare | null>(null);
+  const { route, go } = useRouter();
+  const minClass = route.minClass;
+  const reduced = usePrefersReducedMotion();
 
   const { data, isLoading } = useQuery({
-    queryKey: ['catalogue', filterClass],
+    queryKey: ['catalogue', minClass],
     queryFn: () =>
       api.get<CatalogueData>(
-        `/api/flare/catalogue?min_class=${filterClass === 'ALL' ? 'A' : filterClass}&page_size=50`,
+        `/api/flare/catalogue?min_class=${minClass === 'ALL' ? 'A' : minClass}&page_size=50`,
       ),
   });
 
+  const { data: detail, isError: detailError } = useQuery({
+    queryKey: ['flare', route.flareId],
+    queryFn: () => api.get<FlareDetail>(`/api/flare/${route.flareId}`),
+    enabled: !!route.flareId,
+    staleTime: 60_000,
+  });
+
   const flares = data?.items ?? [];
+  const total = data?.total ?? 0;
 
   const handleDownloadCsv = () => {
     window.location.href = '/api/flare/catalogue?format=csv';
   };
 
   return (
-    <div className="sk-panel p-5">
-      {/* Header & Filter Controls */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
-        <div className="flex items-center gap-2.5">
-          <Database className="w-5 h-5 text-amber-500" />
-          <div>
-            <h3 className="text-base font-bold text-slate-900">Solar Flare Detection Catalogue</h3>
-            <p className="text-xs text-slate-500">Offline &amp; Simulated Event Detections Log</p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <div className="flex items-center bg-slate-50 p-0.5 rounded-lg border border-slate-200 text-xs font-mono-val">
-            {FILTERS.map((c) => (
-              <button
+    <Panel
+      label="Flare Catalogue"
+      meta={<span>{total} events · synthetic cache</span>}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        {/* Class filter lives in the URL (?class=M) so a filtered view is shareable. */}
+        <div className="flex items-center border border-rule text-[11px] font-mono-val" role="group" aria-label="Class filter">
+          {FILTERS.map((c) => {
+            const active = minClass === c;
+            const href = catalogueUrl(null, c);
+            return (
+              <a
                 key={c}
-                onClick={() => setFilterClass(c)}
-                aria-pressed={filterClass === c}
-                className={`px-3 py-1 rounded-md transition-all ${
-                  filterClass === c
-                    ? 'bg-amber-500 text-black font-bold'
-                    : 'text-slate-500 hover:text-slate-700'
+                href={href}
+                aria-current={active ? 'true' : undefined}
+                onClick={(e) => {
+                  if (isModifiedClick(e)) return;
+                  e.preventDefault();
+                  go(href);
+                }}
+                className={`px-3 py-1 ${
+                  active ? 'bg-accent text-white font-bold' : 'text-ink-muted hover:text-ink'
                 }`}
               >
-                {c === 'ALL' ? 'ALL' : `${c}-Class`}
-              </button>
-            ))}
-          </div>
-
-          <button
-            onClick={handleDownloadCsv}
-            aria-label="Export catalogue as CSV"
-            className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 text-xs font-semibold flex items-center gap-1.5 transition-colors"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>Export CSV</span>
-          </button>
+                {c === 'ALL' ? 'ALL' : `${c}-CLASS`}
+              </a>
+            );
+          })}
         </div>
+
+        <button
+          type="button"
+          onClick={handleDownloadCsv}
+          aria-label="Export catalogue as CSV"
+          className="px-3 py-1.5 text-[11px] font-semibold border border-rule text-ink-muted hover:text-ink hover:border-rule-strong flex items-center gap-1.5 transition-colors"
+        >
+          <Download className="w-3.5 h-3.5" aria-hidden="true" />
+          <span>Export CSV</span>
+        </button>
       </div>
 
-      {/* Flare Table */}
-      <div className="overflow-x-auto rounded-xl border border-slate-200">
-        <table className="w-full text-left text-xs font-mono-val" role="grid" aria-label="Flare catalogue">
-          <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] border-b border-slate-200">
+      <div className="overflow-x-auto border border-rule">
+        <table className="w-full text-left text-xs font-mono-val tabular-nums" role="grid" aria-label="Flare catalogue">
+          <thead className="bg-surface text-ink-faint uppercase text-[10px] tracking-[0.1em] border-b border-rule">
             <tr>
-              <th className="p-3">ID</th>
-              <th className="p-3">Onset Time (UTC)</th>
-              <th className="p-3">Peak Time</th>
-              <th className="p-3">Class</th>
-              <th className="p-3 text-right">SXR Peak (W/m²)</th>
-              <th className="p-3 text-right">Hardness</th>
-              <th className="p-3 text-right">Impulsivity</th>
-              <th className="p-3 text-center">Impact Index</th>
-              <th className="p-3 text-center">Detection Method</th>
-              <th className="p-3"></th>
+              <th className="px-3 py-2 font-semibold">ID</th>
+              <th className="px-3 py-2 font-semibold">Onset (UTC)</th>
+              <th className="px-3 py-2 font-semibold">Peak</th>
+              <th className="px-3 py-2 font-semibold">Class</th>
+              <th className="px-3 py-2 font-semibold text-right">SXR peak</th>
+              <th className="px-3 py-2 font-semibold text-right">Hardness</th>
+              <th className="px-3 py-2 font-semibold text-right">Impulsivity</th>
+              <th className="px-3 py-2 font-semibold text-right">Impact</th>
+              <th className="px-3 py-2 font-semibold">Detection</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 bg-white text-slate-700">
+          <tbody className="divide-y divide-rule bg-panel text-ink">
             {isLoading ? (
               <tr>
-                <td colSpan={10} className="p-6 text-center text-slate-400 font-sans">
-                  Loading catalogue items...
+                <td colSpan={9} className="px-3 py-6 text-center text-ink-faint font-sans">
+                  Loading catalogue items…
                 </td>
               </tr>
             ) : flares.length === 0 ? (
               <tr>
-                <td colSpan={10} className="p-6 text-center text-slate-400 font-sans">
+                <td colSpan={9} className="px-3 py-6 text-center text-ink-faint font-sans">
                   No flare events matching filter criteria.
                 </td>
               </tr>
             ) : (
               flares.map((row) => {
-                const cls = row.class || 'A0.0';
-                const clsColor = goesClassColor(row.peak_flux_sxr);
-
+                const href = catalogueUrl(row.id, minClass);
+                const selected = route.flareId === row.id;
                 return (
                   <tr
                     key={row.id}
-                    onClick={() => setSelectedFlare(row)}
-                    className="hover:bg-slate-50 cursor-pointer transition-colors"
-                    tabIndex={0}
-                    onKeyDown={(e) => { if (e.key === 'Enter') setSelectedFlare(row); }}
+                    className={selected ? 'bg-accent-wash' : 'hover:bg-surface'}
                   >
-                    <td className="p-3 font-bold text-sky-600">{row.id}</td>
-                    <td className="p-3">{row.onset ? row.onset.replace('T', ' ').replace('Z', '') : '-'}</td>
-                    <td className="p-3">{row.peak ? row.peak.replace('T', ' ').replace('Z', '') : '-'}</td>
-                    <td className="p-3 font-bold" style={{ color: clsColor }}>{cls}</td>
-                    <td className="p-3 text-right text-sky-600">
-                      {row.peak_flux_sxr ? row.peak_flux_sxr.toExponential(2) : '-'}
+                    <td className="px-3 py-2">
+                      <a
+                        href={href}
+                        onClick={(e) => {
+                          if (isModifiedClick(e)) return;
+                          e.preventDefault();
+                          go(href);
+                        }}
+                        className={`font-semibold underline-offset-2 hover:underline ${selected ? 'text-accent' : 'text-ink'}`}
+                        aria-current={selected ? 'true' : undefined}
+                      >
+                        {row.id}
+                      </a>
                     </td>
-                    <td className="p-3 text-right text-violet-600">
-                      {row.hardness ? row.hardness.toFixed(3) : '-'}
+                    <td className="px-3 py-2 text-ink-muted">{fmtTs(row.onset)}</td>
+                    <td className="px-3 py-2 text-ink-muted">{fmtTs(row.peak)}</td>
+                    <td className="px-3 py-2 font-bold" style={{ color: goesClassColor(row.peak_flux_sxr) }}>
+                      {row.class || 'A0.0'}
                     </td>
-                    <td className="p-3 text-right text-orange-600">
-                      {row.impulsivity ? row.impulsivity.toFixed(2) : '-'}
+                    <td className="px-3 py-2 text-right text-ink-muted">
+                      {row.peak_flux_sxr ? row.peak_flux_sxr.toExponential(2) : '—'}
                     </td>
-                    <td className="p-3 text-center">
-                      <span className="px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-700 font-bold">
-                        {row.impact_index ? row.impact_index.toFixed(2) : '0.0'}
-                      </span>
+                    <td className="px-3 py-2 text-right text-ink-muted">
+                      {row.hardness ? row.hardness.toFixed(3) : '—'}
                     </td>
-                    <td className="p-3 text-center">
-                      <span className="px-2 py-0.5 text-[10px] rounded bg-slate-50 text-slate-500 border border-slate-200">
-                        {row.detection_method || 'BOCPD'}
-                      </span>
+                    <td className="px-3 py-2 text-right text-ink-muted">
+                      {row.impulsivity ? row.impulsivity.toFixed(2) : '—'}
                     </td>
-                    <td className="p-3 text-slate-400 text-right">
-                      <ChevronRight className="w-4 h-4" />
-                    </td>
+                    <td className="px-3 py-2 text-right font-semibold">{row.impact_index.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-ink-faint">{row.detection_method || '—'}</td>
                   </tr>
                 );
               })
@@ -143,79 +257,27 @@ export default function FlareCatalogue() {
         </table>
       </div>
 
-      {/* Modal Detail View */}
-      {selectedFlare && (
-        <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Flare detail: ${selectedFlare.id}`}
-          onKeyDown={(e) => { if (e.key === 'Escape') setSelectedFlare(null); }}
-        >
-          <div className="bg-white border border-slate-200 shadow-xl p-6 rounded-2xl max-w-xl w-full relative">
-            <button
-              onClick={() => setSelectedFlare(null)}
-              aria-label="Close detail view"
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-700 p-1"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2 mb-4">
-              <span className="text-sky-600">Flare Detail:</span>
-              <span className="font-mono-val">{selectedFlare.id}</span>
-              <span
-                className="px-2.5 py-0.5 rounded text-xs font-bold border"
-                style={{
-                  color: goesClassColor(selectedFlare.peak_flux_sxr),
-                  borderColor: goesClassColor(selectedFlare.peak_flux_sxr),
-                  backgroundColor: '#fff',
-                }}
-              >
-                {selectedFlare.class}
-              </span>
-            </h3>
-
-            <div className="grid grid-cols-2 gap-4 font-mono-val text-xs">
-              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                <div className="text-slate-400">ONSET TIMESTAMP</div>
-                <div className="text-slate-700 mt-1 font-bold">{selectedFlare.onset}</div>
-              </div>
-              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                <div className="text-slate-400">PEAK TIMESTAMP</div>
-                <div className="text-slate-700 mt-1 font-bold">{selectedFlare.peak}</div>
-              </div>
-              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                <div className="text-slate-400">SXR PEAK FLUX</div>
-                <div className="text-sky-600 mt-1 font-bold">{selectedFlare.peak_flux_sxr?.toExponential(3)} W/m²</div>
-              </div>
-              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                <div className="text-slate-400">HXR PEAK FLUX</div>
-                <div className="text-amber-600 mt-1 font-bold">{selectedFlare.peak_flux_hxr?.toExponential(3)} W/m²</div>
-              </div>
-              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                <div className="text-slate-400">IMPACT INDEX / R-LEVEL</div>
-                <div className="text-red-600 mt-1 font-bold">
-                  {selectedFlare.impact_index?.toFixed(2)} ({selectedFlare.r_level})
-                </div>
-              </div>
-              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                <div className="text-slate-400">DETECTION ENGINE</div>
-                <div className="text-violet-600 mt-1 font-bold">{selectedFlare.detection_method}</div>
-              </div>
-            </div>
-
-            <div className="mt-5 flex justify-end">
-              <button
-                onClick={() => setSelectedFlare(null)}
-                className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+      <AnimatePresence mode="wait" initial={false}>
+        {route.flareId && (
+          <motion.div
+            key={route.flareId}
+            initial={reduced ? false : detailSlide.initial}
+            animate={reduced ? undefined : detailSlide.animate}
+            exit={reduced ? undefined : detailSlide.exit}
+            transition={reduced ? { duration: 0 } : detailSlide.transition}
+          >
+            {detail ? (
+              <FlareDetailPane flare={detail} minClass={minClass} />
+            ) : detailError ? (
+              <p className="mt-4 border border-rule border-l-2 border-l-alarm px-4 py-3 text-xs font-mono-val text-ink-muted">
+                Flare {route.flareId} not found.
+              </p>
+            ) : (
+              <p className="mt-4 px-1 text-xs font-mono-val text-ink-faint">Loading flare {route.flareId}…</p>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </Panel>
   );
 }

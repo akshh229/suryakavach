@@ -1,8 +1,8 @@
 import { useState, useMemo } from 'react';
-import Plot from 'react-plotly.js';
-import { Activity, Layers } from 'lucide-react';
+import { Plot } from '../lib/plotly';
+import Panel from './ui/Panel';
 import type { StreamsLatest } from '../types/api';
-import { GOES_CLASSES } from '../lib/constants';
+import { GOES_CLASSES, SERIES_COLORS, CHART_COLORS, goesClassColor } from '../lib/constants';
 
 interface TelemetryChartProps {
   streams: StreamsLatest | null;
@@ -12,14 +12,30 @@ interface TelemetryChartProps {
 
 const WINDOWS = [60, 120, 360, 1440];
 
+/** Compress the per-sample quality flags into ≤160 cells for the strip. */
+function bucketQuality(quality: number[], maxCells = 160): number[] {
+  if (quality.length <= maxCells) return quality;
+  const size = Math.ceil(quality.length / maxCells);
+  const out: number[] = [];
+  for (let i = 0; i < quality.length; i += size) {
+    const slice = quality.slice(i, i + size);
+    // A cell counts as good only if the whole bucket is good.
+    out.push(slice.every((q) => q !== 0) ? 1 : 0);
+  }
+  return out;
+}
+
 export default function TelemetryChart({ streams, windowSize, onWindowChange }: TelemetryChartProps) {
   const [showPosterior, setShowPosterior] = useState(true);
 
   const solexs = streams?.solexs ?? [];
   const hel1os = streams?.hel1os ?? [];
   const changepoints = streams?.changepoints ?? [];
+  const gaps = streams?.gaps ?? [];
+  const flareIntervals = streams?.flare_intervals ?? [];
+  const quality = streams?.quality ?? [];
 
-  const { sxrX, sxrY, hxrX, hxrY, cpX, cpY } = useMemo(() => {
+  const { sxrX, sxrY, hxrX, hxrY, cpX, cpY, qualityCells } = useMemo(() => {
     const sxrX = solexs.map((d) => d.t);
     const sxrY = solexs.map((d) => (d.v && d.v > 0 ? d.v : 1e-9));
     const hxrX = hel1os.map((d) => d.t);
@@ -36,57 +52,120 @@ export default function TelemetryChart({ streams, windowSize, onWindowChange }: 
       }
     });
 
-    return { sxrX, sxrY, hxrX, hxrY, cpX, cpY };
-  }, [solexs, hel1os, changepoints]);
+    return { sxrX, sxrY, hxrX, hxrY, cpX, cpY, qualityCells: bucketQuality(quality) };
+  }, [solexs, hel1os, changepoints, quality]);
 
   const layout = useMemo(
     () => ({
       autosize: true,
       height: 400,
-      margin: { l: 60, r: 60, t: 20, b: 40 },
+      // Right margin widened: two axes live on the right (HXR + P(CP)).
+      margin: { l: 56, r: 76, t: 16, b: 36 },
       paper_bgcolor: 'rgba(0,0,0,0)',
-      plot_bgcolor: '#f8fafc',
-      font: { family: 'JetBrains Mono, monospace', size: 10, color: '#64748b' },
+      plot_bgcolor: CHART_COLORS.plotBg,
+      font: { family: 'JetBrains Mono, monospace', size: 10, color: '#5c6066' },
       xaxis: {
-        gridcolor: '#e2e8f0',
-        zerolinecolor: '#cbd5e1',
+        gridcolor: CHART_COLORS.grid,
+        zerolinecolor: CHART_COLORS.zeroline,
         tickangle: 0,
         nticks: 12,
       },
       yaxis: {
         type: 'log',
         range: [-8, -3],
-        title: { text: 'SXR Flux (W/m²)', font: { color: '#0284c7' } },
-        tickfont: { color: '#0284c7' },
-        gridcolor: '#e2e8f0',
-        zerolinecolor: '#cbd5e1',
+        title: { text: 'SXR W/m²', font: { color: SERIES_COLORS.sxr } },
+        tickfont: { color: SERIES_COLORS.sxr },
+        gridcolor: CHART_COLORS.grid,
+        zerolinecolor: CHART_COLORS.zeroline,
         tickvals: [1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3],
         ticktext: ['A', 'B', 'C', 'M', 'X', 'X10'],
       },
       yaxis2: {
         type: 'log',
         range: [-10, -4],
-        title: { text: 'HXR Flux (W/m²)', font: { color: '#ea580c' } },
-        tickfont: { color: '#ea580c' },
+        title: { text: 'HXR W/m²', font: { color: SERIES_COLORS.hxr } },
+        tickfont: { color: SERIES_COLORS.hxr },
         overlaying: 'y',
         side: 'right',
         showgrid: false,
       },
+      // Posterior is a 0–1 probability: it needs its own linear axis.
+      // Plotting it on the log SXR axis left it five decades below the
+      // visible window, i.e. invisible.
+      yaxis3: {
+        range: [0, 1],
+        title: { text: 'P(CP)', font: { color: SERIES_COLORS.posterior } },
+        tickfont: { color: SERIES_COLORS.posterior },
+        overlaying: 'y',
+        side: 'right',
+        position: 0.96,
+        showgrid: false,
+      },
       showlegend: true,
-      legend: { orientation: 'h', y: 1.1, font: { size: 11, color: '#475569' } },
-      shapes: GOES_CLASSES.slice(1).map((cls) => ({
-        type: 'line',
-        xref: 'paper',
-        x0: 0,
-        x1: 1,
-        y0: cls.threshold,
-        y1: cls.threshold,
-        yref: 'y',
-        line: { color: cls.color, width: 1, dash: 'dot' },
-      })),
+      legend: { orientation: 'h', y: 1.12, font: { size: 10, color: '#5c6066' } },
+      shapes: [
+        // Data gaps: grey bands behind the traces.
+        ...gaps.map((gap) => ({
+          type: 'rect' as const,
+          xref: 'x',
+          x0: gap.start,
+          x1: gap.end,
+          yref: 'paper' as const,
+          y0: 0,
+          y1: 1,
+          fillcolor: CHART_COLORS.gapBand,
+          opacity: 0.7,
+          line: { width: 0 },
+        })),
+        // Detected flare intervals, tinted by GOES class.
+        ...flareIntervals.map((fi) => ({
+          type: 'rect' as const,
+          xref: 'x',
+          x0: fi.start,
+          x1: fi.end,
+          yref: 'paper' as const,
+          y0: 0,
+          y1: 1,
+          fillcolor: goesClassColor(1e-6), // placeholder, replaced below
+          opacity: 0,
+          line: { width: 0 },
+        })),
+        // GOES class thresholds.
+        ...GOES_CLASSES.slice(1).map((cls) => ({
+          type: 'line' as const,
+          xref: 'paper' as const,
+          x0: 0,
+          x1: 1,
+          y0: cls.threshold,
+          y1: cls.threshold,
+          yref: 'y',
+          line: { color: cls.color, width: 1, dash: 'dot' },
+        })),
+      ],
     }),
-    [],
+    [gaps, flareIntervals],
   ) as unknown as Partial<Plotly.Layout>;
+
+  // Tint each flare-interval band with its own class colour. The shapes
+  // array is [gaps..., flareIntervals..., GOES lines], so the interval at
+  // index i lives at gaps.length + i.
+  const layoutWithFlares = useMemo(() => {
+    if (flareIntervals.length === 0) return layout;
+    const shapes = [...(layout.shapes ?? [])];
+    flareIntervals.forEach((fi, i) => {
+      const flux =
+        GOES_CLASSES.find((c) => c.label === fi.class.charAt(0).toUpperCase())?.threshold ?? 1e-6;
+      const shapeIdx = gaps.length + i;
+      if (shapes[shapeIdx]) {
+        shapes[shapeIdx] = {
+          ...shapes[shapeIdx],
+          fillcolor: goesClassColor(flux),
+          opacity: 0.12,
+        };
+      }
+    });
+    return { ...layout, shapes };
+  }, [layout, flareIntervals, gaps.length]);
 
   const data: Plotly.Data[] = [
     {
@@ -95,9 +174,9 @@ export default function TelemetryChart({ streams, windowSize, onWindowChange }: 
       type: 'scatter',
       mode: 'lines',
       name: 'SoLEXS SXR',
-      line: { color: '#06b6d4', width: 2 },
+      line: { color: SERIES_COLORS.sxr, width: 1.8 },
       fill: 'tozeroy',
-      fillcolor: 'rgba(6, 182, 212, 0.08)',
+      fillcolor: 'rgba(14, 116, 144, 0.07)',
       yaxis: 'y',
     },
     {
@@ -106,7 +185,7 @@ export default function TelemetryChart({ streams, windowSize, onWindowChange }: 
       type: 'scatter',
       mode: 'lines',
       name: 'HEL1OS HXR',
-      line: { color: '#f97316', width: 1.8 },
+      line: { color: SERIES_COLORS.hxr, width: 1.5 },
       yaxis: 'y2',
     },
     ...(showPosterior && cpX.length > 0
@@ -117,79 +196,103 @@ export default function TelemetryChart({ streams, windowSize, onWindowChange }: 
             type: 'scatter' as const,
             mode: 'lines' as const,
             name: 'BOCPD P(CP)',
-            line: { color: '#a855f7', width: 1.5, dash: 'dash' },
-            yaxis: 'y',
-            yaxis_ref: 'y' as const,
+            line: { color: SERIES_COLORS.posterior, width: 1.2, dash: 'dash' },
+            yaxis: 'y3',
           },
         ]
       : []),
   ];
 
   return (
-    <div className="sk-panel p-5 flex flex-col h-[460px]">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
-        <div className="flex items-center gap-2.5">
-          <Activity className="w-5 h-5 text-sky-500" />
-          <h3 className="text-base font-bold text-slate-900">Solar X-Ray Telemetry Stream (Aditya-L1)</h3>
-          <span className="px-2 py-0.5 text-[10px] font-mono-val bg-sky-50 text-sky-700 border border-sky-200 rounded">
-            {solexs.length} pts
-          </span>
-        </div>
+    <Panel
+      label="X-Ray Telemetry — Aditya-L1"
+      meta={
+        <>
+          <span>{solexs.length} pts</span>
+          {gaps.length > 0 && <span>{gaps.length} gaps</span>}
+          {flareIntervals.length > 0 && <span>{flareIntervals.length} flares</span>}
+        </>
+      }
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <button
+          type="button"
+          onClick={() => setShowPosterior(!showPosterior)}
+          aria-pressed={showPosterior}
+          className={`px-2.5 py-1 text-[11px] font-mono-val border transition-colors ${
+            showPosterior
+              ? 'text-accent border-accent bg-accent-wash'
+              : 'text-ink-muted border-rule hover:text-ink'
+          }`}
+        >
+          BOCPD P(CP)
+        </button>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowPosterior(!showPosterior)}
-            aria-pressed={showPosterior}
-            className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 ${
-              showPosterior
-                ? 'bg-violet-50 text-violet-700 border-violet-200'
-                : 'bg-slate-50 text-slate-500 border-slate-200'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span>BOCPD P(CP)</span>
-          </button>
-
-          <div className="flex items-center bg-slate-50 p-0.5 rounded-lg border border-slate-200 text-xs font-mono-val">
-            {WINDOWS.map((w) => (
-              <button
-                key={w}
-                onClick={() => onWindowChange(w)}
-                aria-pressed={windowSize === w}
-                className={`px-2.5 py-1 rounded-md transition-all ${
-                  windowSize === w ? 'bg-amber-500 text-black font-bold' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                {w >= 60 ? `${w / 60}h` : `${w}m`}
-              </button>
-            ))}
-          </div>
+        <div className="flex items-center border border-rule text-[11px] font-mono-val">
+          {WINDOWS.map((w) => (
+            <button
+              key={w}
+              type="button"
+              onClick={() => onWindowChange(w)}
+              aria-pressed={windowSize === w}
+              className={`px-2.5 py-1 ${
+                windowSize === w
+                  ? 'bg-accent text-white font-bold'
+                  : 'text-ink-muted hover:text-ink'
+              }`}
+            >
+              {w >= 60 ? `${w / 60}h` : `${w}m`}
+            </button>
+          ))}
         </div>
       </div>
 
-      <div className="flex-1 w-full min-h-0 relative">
+      <div className="w-full" style={{ height: 400 }}>
         <Plot
           data={data}
-          layout={layout}
+          layout={layoutWithFlares}
           config={{ displayModeBar: false, responsive: true }}
           style={{ width: '100%', height: '100%' }}
           useResizeHandler
         />
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 mt-3 pt-3 border-t border-slate-200 text-[11px] text-slate-500 font-mono-val">
+      {/* Per-sample data quality — one cell per bucket, full width. */}
+      {qualityCells.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[10px] uppercase tracking-[0.12em] text-ink-faint">Data quality</span>
+            <span className="text-[10px] font-mono-val text-ink-faint">
+              {qualityCells.filter((q) => q === 0).length === 0 ? 'no gaps in window' : 'grey = gap'}
+            </span>
+          </div>
+          <div
+            className="flex w-full h-2 border border-rule overflow-hidden"
+            role="img"
+            aria-label={`Data quality strip: ${qualityCells.filter((q) => q === 0).length} of ${qualityCells.length} buckets contain gaps`}
+          >
+            {qualityCells.map((q, i) => (
+              <div
+                key={i}
+                className="flex-1"
+                style={{ backgroundColor: q === 0 ? 'var(--color-rule-strong)' : 'var(--color-ok)' }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center justify-between gap-2 mt-3 pt-3 border-t border-rule text-[11px] text-ink-faint font-mono-val">
         <div className="flex items-center gap-3">
-          <span className="text-slate-400 font-sans font-medium">GOES Scale:</span>
+          <span className="font-sans">GOES scale</span>
           {GOES_CLASSES.map((cls) => (
             <span key={cls.label} style={{ color: cls.color }}>
-              {cls.label} ({cls.threshold.toExponential(0)})
+              {cls.label} {cls.threshold.toExponential(0)}
             </span>
           ))}
         </div>
-        <div className="text-slate-400">
-          Dual Payloads: SoLEXS (0.5–10 Å) &amp; HEL1OS (10–150 keV)
-        </div>
+        <div>SoLEXS 0.5–10 Å · HEL1OS 10–150 keV</div>
       </div>
-    </div>
+    </Panel>
   );
 }

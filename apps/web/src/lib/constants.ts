@@ -78,6 +78,42 @@ export function riskColor(p: number): string {
   return '#16a34a';
 }
 
+// Instrument series colours — single source for every Plotly trace and
+// legend. Darkened from the Tailwind palette so they hold up on warm white.
+export const SERIES_COLORS = {
+  sxr: '#0e7490',       // SoLEXS soft X-ray
+  hxr: '#c2410c',       // HEL1OS hard X-ray
+  posterior: '#6d28d9', // BOCPD P(CP)
+} as const;
+
+// Chart chrome neutrals, matched to the token palette in index.css.
+export const CHART_COLORS = {
+  grid: '#ecebe7',
+  zeroline: '#d8d6d1',
+  plotBg: '#faf9f7',
+  gapBand: '#e7e5e0',
+} as const;
+
+/**
+ * Offline validation metrics.
+ *
+ * Transcribed by hand from backend/reports/metrics.md — synthetic fused
+ * SoLEXS/HEL1OS cache, NOT an operational claim. Both cohorts are shown on
+ * the dashboard: the all-class row is where the 56 false positives live, and
+ * hiding it behind the M+ row would misrepresent the evaluation.
+ *
+ * There is no /api/metrics endpoint yet; when one exists, delete this
+ * constant and query it instead — the panel reads it through one import.
+ */
+export const METRICS = {
+  allClass: { label: 'All classes', tss: 0.001, hss: 0.001, far: 0.659, tp: 29, fp: 56, fn: 1 },
+  mPlus: { label: 'M+ only', tss: 1.0, hss: 1.0, far: 0.0 },
+  meanOnsetLeadMin: 16.5,
+  targetTss: 0.6,
+  targetLeadMin: 3,
+  provenance: 'backend/reports/metrics.md — synthetic fused SoLEXS/HEL1OS cache',
+} as const;
+
 // Nowcast state labels and colors
 export const NOWCAST_STATES = {
   quiet: { label: 'Quiet', color: '#16a34a', bg: '#f0fdf4' },
@@ -94,7 +130,9 @@ export const REPLAY = {
   MIN_CURSOR: 0,
   MAX_CURSOR: 1439,
   DEFAULT_SPEED: 20,
-  SPEEDS: [1, 5, 10, 20, 50, 100] as const,
+  // Must stay within the API's accepted range (1..60, see api.py ReplayControl)
+  // and match config.yaml `replay.speeds`.
+  SPEEDS: [1, 5, 20, 60] as const,
   DEFAULT_EVENT_DATE: '2024-02-22',
   TICK_MS: 500,
 } as const;

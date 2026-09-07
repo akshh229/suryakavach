@@ -32,14 +32,14 @@ beforeEach(() => {
 describe('FlareCatalogue', () => {
   it('renders the panel heading', async () => {
     renderWithProviders(<FlareCatalogue />);
-    expect(screen.getByText('Solar Flare Detection Catalogue')).toBeInTheDocument();
+    expect(screen.getByText('Flare Catalogue')).toBeInTheDocument();
   });
 
-  it('renders filter buttons', () => {
+  it('renders filter links', () => {
     renderWithProviders(<FlareCatalogue />);
-    expect(screen.getByText('ALL')).toBeInTheDocument();
-    expect(screen.getByText('X-Class')).toBeInTheDocument();
-    expect(screen.getByText('M-Class')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'ALL' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'X-CLASS' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'M-CLASS' })).toBeInTheDocument();
   });
 
   it('renders export CSV button', () => {

@@ -1,110 +1,150 @@
 @import "tailwindcss";
 
-@import "tailwindcss";
+/*
+ * Design tokens — Tailwind v4 CSS-first theming.
+ * Each --color-* below becomes a real utility (bg-surface, border-rule,
+ * text-ink-muted, ...) so components never hardcode hexes.
+ *
+ * Palette: warm paper neutrals, one amber accent reserved for interactive
+ * and selected states. Data colour (GOES class, R-scale, risk) comes from
+ * src/lib/constants.ts and is the ONLY other colour on screen.
+ */
+@theme {
+  --color-surface: #fbfbfa;      /* page */
+  --color-panel: #ffffff;        /* panels */
+  --color-rule: #e3e2df;         /* hairline */
+  --color-rule-strong: #c9c7c2;  /* emphasis rule */
+  --color-ink: #15171a;
+  --color-ink-muted: #5c6066;
+  --color-ink-faint: #8b8f96;
+  --color-accent: #b45309;       /* interactive / selected ONLY */
+  --color-accent-wash: #fdf6ec;
+  --color-ok: #16a34a;
+  --color-warn: #d97706;
+  --color-alarm: #dc2626;
+}
 
 @layer base {
   :root {
     --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
     --font-mono: 'JetBrains Mono', monospace;
-    --sk-surface: #f8fafc;
-    --sk-surface-alt: #f1f5f9;
-    --sk-border: #e2e8f0;
-    --sk-border-strong: #cbd5e1;
-    --sk-text: #0f172a;
-    --sk-text-muted: #64748b;
-    --sk-accent: #d97706;
-    --sk-accent-light: #fef3c7;
-    --sk-danger: #dc2626;
-    --sk-danger-light: #fef2f2;
-    --sk-success: #16a34a;
-    --sk-success-light: #f0fdf4;
-    --sk-info: #0284c7;
-    --sk-info-light: #f0f9ff;
-    --sk-warning: #d97706;
-    --sk-warning-light: #fffbeb;
+    color-scheme: light;
   }
 
   body {
     font-family: var(--font-sans);
-    background-color: var(--sk-surface);
-    color: var(--sk-text);
+    background-color: var(--color-surface);
+    color: var(--color-ink);
     overflow-x: hidden;
   }
 }
 
+/* Numerals: monospaced AND tabular, so columns of exponents and clocks
+   do not shift between ticks. */
 .font-mono-val {
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
-/* Light-theme panel */
+/* Panel: hairline-ruled, near-square corners, no shadow. */
 .sk-panel {
-  background: #ffffff;
-  border: 1px solid var(--sk-border);
-  border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  background: var(--color-panel);
+  border: 1px solid var(--color-rule);
+  border-radius: 2px;
 }
 
-.sk-panel-hover:hover {
-  border-color: var(--sk-border-strong);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
-}
-
-/* Custom Scrollbar — light */
+/* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--sk-surface-alt);
+  background: var(--color-surface);
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--sk-border-strong);
+  background: var(--color-rule-strong);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: var(--color-ink-faint);
 }
 
-/* Pulse animation for active flare state */
-@keyframes radar-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
-  70% { box-shadow: 0 0 0 15px rgba(220, 38, 38, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+/* Typewriter caret — a hairline accent block that blinks while typing. */
+.sk-caret {
+  display: inline-block;
+  width: 0.5ch;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--color-accent);
+  animation: sk-blink 1s steps(1) infinite;
 }
-.animate-radar {
-  animation: radar-pulse 2s infinite;
+.sk-caret-idle {
+  animation: none;
+  opacity: 0;
 }
-
-/* Shimmer gradient */
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
-}
-.shimmer-text {
-  background: linear-gradient(90deg, #d97706 0%, #f59e0b 50%, #d97706 100%);
-  background-size: 200% auto;
-  color: transparent;
-  -webkit-background-clip: text;
-  background-clip: text;
-  animation: shimmer 3s linear infinite;
+@keyframes sk-blink {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
 }
 
-/* Reduced motion */
+/* CSS-3D orbital brand mark: a core with two inclined, rotating rings. */
+.sk-orbit {
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+  transform-style: preserve-3d;
+  perspective: 120px;
+}
+.sk-orbit-core {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 30%;
+  height: 30%;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: 0 0 4px 1px var(--color-accent-wash);
+  transform: translate(-50%, -50%);
+}
+.sk-orbit-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid var(--color-rule-strong);
+  transform-style: preserve-3d;
+}
+.sk-orbit-ring-a {
+  border-top-color: var(--color-accent);
+  animation: sk-orbit-a 6s linear infinite;
+}
+.sk-orbit-ring-b {
+  border-left-color: var(--color-accent);
+  animation: sk-orbit-b 9s linear infinite;
+}
+@keyframes sk-orbit-a {
+  from { transform: rotateX(72deg) rotateZ(0deg); }
+  to { transform: rotateX(72deg) rotateZ(360deg); }
+}
+@keyframes sk-orbit-b {
+  from { transform: rotateY(68deg) rotateZ(0deg); }
+  to { transform: rotateY(68deg) rotateZ(-360deg); }
+}
+
+/* Reduced motion: kill every animation and transition-derived lift. */
 @media (prefers-reduced-motion: reduce) {
-  .animate-radar,
-  .shimmer-text,
-  .animate-ping,
-  .animate-bounce,
-  .animate-spin {
+  *,
+  *::before,
+  *::after {
     animation: none !important;
+    transition: none !important;
   }
 }
 
 /* Visible focus indicator for keyboard navigation */
 :focus-visible {
-  outline: 2px solid #d97706;
+  outline: 2px solid var(--color-accent);
   outline-offset: 2px;
-  border-radius: 4px;
 }
 
 /* Skip to content link */
@@ -112,14 +152,13 @@
   position: absolute;
   top: -40px;
   left: 0;
-  background: #0f172a;
+  background: var(--color-ink);
   color: #fff;
   padding: 8px 16px;
   z-index: 100;
   font-size: 14px;
   font-weight: 600;
   text-decoration: none;
-  border-radius: 0 0 8px 0;
 }
 .skip-link:focus {
   top: 0;

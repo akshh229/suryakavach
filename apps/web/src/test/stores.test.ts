@@ -1,40 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { useUIStore } from '../store/uiStore';
 import { useReplayStore } from '../store/replayStore';
-
-describe('useUIStore', () => {
-  beforeEach(() => {
-    useUIStore.setState({
-      activeScreen: 'monitor',
-      selectedFlareId: null,
-      sidebarCollapsed: false,
-    });
-  });
-
-  it('defaults to monitor screen', () => {
-    expect(useUIStore.getState().activeScreen).toBe('monitor');
-  });
-
-  it('setScreen updates active screen', () => {
-    useUIStore.getState().setScreen('catalogue');
-    expect(useUIStore.getState().activeScreen).toBe('catalogue');
-  });
-
-  it('setSelectedFlare updates selected flare id', () => {
-    useUIStore.getState().setSelectedFlare('FLR-001');
-    expect(useUIStore.getState().selectedFlareId).toBe('FLR-001');
-    useUIStore.getState().setSelectedFlare(null);
-    expect(useUIStore.getState().selectedFlareId).toBeNull();
-  });
-
-  it('toggleSidebar flips sidebar state', () => {
-    expect(useUIStore.getState().sidebarCollapsed).toBe(false);
-    useUIStore.getState().toggleSidebar();
-    expect(useUIStore.getState().sidebarCollapsed).toBe(true);
-    useUIStore.getState().toggleSidebar();
-    expect(useUIStore.getState().sidebarCollapsed).toBe(false);
-  });
-});
 
 describe('useReplayStore', () => {
   beforeEach(() => {
@@ -59,14 +24,13 @@ describe('useReplayStore', () => {
   });
 
   it('togglePlay flips playing state', () => {
-    expect(useReplayStore.getState().playing).toBe(false);
     useReplayStore.getState().togglePlay();
     expect(useReplayStore.getState().playing).toBe(true);
     useReplayStore.getState().togglePlay();
     expect(useReplayStore.getState().playing).toBe(false);
   });
 
-  it('setSpeed updates speed', () => {
+  it('setSpeed updates speed state', () => {
     useReplayStore.getState().setSpeed(50);
     expect(useReplayStore.getState().speed).toBe(50);
   });

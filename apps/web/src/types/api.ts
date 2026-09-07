@@ -155,6 +155,32 @@ export interface ReplayDates {
   dates: string[];
 }
 
+/** Canonical replay state returned by every replay control mutation. */
+export interface ReplayState {
+  playing: boolean;
+  speed: number;
+  cursor_idx: number;
+  cursor: string;
+  event_date: string;
+  mode: string;
+}
+
+/** Payload for POST /api/replay/control. */
+export type ReplayAction = 'play' | 'pause' | 'toggle' | 'stop' | 'seek' | 'speed' | 'status';
+
+export interface ReplayControlBody {
+  action: ReplayAction;
+  speed?: number;
+  cursor?: number;
+}
+
+export interface ReplayStartResult {
+  session_id: number | null;
+  event_date: string;
+  speed: number;
+  cursor: string;
+}
+
 export interface FlareDetail extends CatalogueFlare {
   series?: {
     solexs: DataPoint[];

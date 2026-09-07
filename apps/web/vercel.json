@@ -1,7 +1,8 @@
 {
   "rewrites": [
     { "source": "/api/(.*)", "destination": "https://suryakavach-api.onrender.com/api/$1" },
-    { "source": "/ws/live", "destination": "wss://suryakavach-api.onrender.com/ws/live" }
+    { "source": "/ws/live", "destination": "wss://suryakavach-api.onrender.com/ws/live" },
+    { "source": "/(.*)", "destination": "/index.html" }
   ],
   "headers": [
     {

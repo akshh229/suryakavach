@@ -1,4 +1,3 @@
-import { Sun, Activity, Clock, Cpu, Wifi } from 'lucide-react';
 import type { HealthStatus, Clock as ClockType } from '../types/api';
 
 interface HeaderProps {
@@ -7,87 +6,62 @@ interface HeaderProps {
   wsConnected: boolean;
 }
 
+function engineTone(status: string | undefined): string {
+  if (!status) return 'var(--color-ink-faint)';
+  if (status === 'ok' || status === 'ready') return 'var(--color-ok)';
+  return 'var(--color-alarm)';
+}
+
+/**
+ * Status strip: one hairline-ruled row of live console state — connection,
+ * engines, stream mode, and the UTC/IST clock. Tabular numerals keep the
+ * clock from jittering between ticks.
+ */
 export default function Header({ health, clock, wsConnected }: HeaderProps) {
-  const utcTime = clock?.utc ?? '—';
-  const istTime = clock?.ist ?? '—';
-  const utcDisplay = utcTime.includes('T') ? utcTime.split('T')[1]?.replace('Z', '') : utcTime;
-  const istDisplay = istTime.includes('T') ? istTime.split('T')[1]?.replace('Z', '') : istTime;
+  const utc = clock?.utc ?? '—';
+  const ist = clock?.ist ?? '—';
+  const utcDisplay = utc.includes('T') ? utc.split('T')[1]?.replace('Z', '') : utc;
+  const istDisplay = ist.includes('T') ? ist.split('T')[1]?.replace('Z', '') : ist;
 
   return (
-    <header className="sk-panel border-b border-slate-200 px-6 py-4 sticky top-0 z-50 rounded-none">
-      <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-        {/* Brand */}
-        <div className="flex items-center gap-3">
-          <div className="relative flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500 via-orange-500 to-red-500 p-0.5 shadow-lg shadow-orange-500/20">
-            <div className="w-full h-full bg-white rounded-[10px] flex items-center justify-center">
-              <Sun className="w-7 h-7 text-amber-500" />
-            </div>
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold tracking-wider text-slate-900 uppercase">SURYAKAVACH</h1>
-              <span className="px-2 py-0.5 text-[10px] font-semibold tracking-wider rounded bg-amber-50 text-amber-700 border border-amber-200">
-                SIH26209
-              </span>
-            </div>
-            <p className="text-xs text-slate-500">
-              Indigenous Solar-Flare Nowcast &amp; Radiation Impact System (SoLEXS / HEL1OS)
-            </p>
-          </div>
+    <header className="bg-panel border-b border-rule sticky top-0 z-40">
+      <div className="max-w-[1200px] mx-auto flex flex-wrap items-center gap-x-5 gap-y-1.5 px-4 py-2 text-[11px] font-mono-val tabular-nums text-ink-muted">
+        <div className="flex items-center gap-1.5">
+          <span
+            className="inline-block w-1.5 h-1.5 rounded-full"
+            style={{ backgroundColor: wsConnected ? 'var(--color-ok)' : 'var(--color-alarm)' }}
+            aria-hidden="true"
+          />
+          <span className={wsConnected ? 'text-ok' : 'text-alarm'}>
+            {wsConnected ? 'LINK' : 'NO LINK'}
+          </span>
         </div>
 
-        {/* Status Indicators & Clock */}
-        <div className="flex flex-wrap items-center gap-4 text-xs font-mono-val">
-          {/* WS Connection */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-sans"
-            style={{
-              color: wsConnected ? '#16a34a' : '#dc2626',
-              borderColor: wsConnected ? '#86efac' : '#fca5a5',
-              backgroundColor: wsConnected ? '#f0fdf4' : '#fef2f2',
-            }}
-          >
-            <Wifi className="w-3.5 h-3.5" />
-            <span>{wsConnected ? 'WS Connected' : 'WS Disconnected'}</span>
-          </div>
+        <div className="flex items-center gap-3">
+          <span>
+            BOCPD <span style={{ color: engineTone(health?.engines?.nowcast) }}>{health?.engines?.nowcast ?? '—'}</span>
+          </span>
+          <span>
+            FCST <span style={{ color: engineTone(health?.engines?.forecast) }}>{health?.engines?.forecast ?? '—'}</span>
+          </span>
+          <span>
+            IMPACT <span style={{ color: engineTone(health?.engines?.impact) }}>{health?.engines?.impact ?? '—'}</span>
+          </span>
+        </div>
 
-          {/* Engines status */}
-          <div className="flex items-center gap-3 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200">
-            <div className="flex items-center gap-1.5 text-slate-600">
-              <Cpu className="w-3.5 h-3.5 text-sky-500" />
-              <span>BOCPD:</span>
-              <span className="text-emerald-600 font-semibold">
-                {health?.engines?.nowcast ?? '—'}
-              </span>
-            </div>
-            <span className="text-slate-300">|</span>
-            <div className="flex items-center gap-1.5 text-slate-600">
-              <Activity className="w-3.5 h-3.5 text-amber-500" />
-              <span>Forecast:</span>
-              <span className="text-emerald-600 font-semibold">
-                {health?.engines?.forecast ?? '—'}
-              </span>
-            </div>
-          </div>
+        <span className="text-ink">
+          {health?.mode === 'replay' ? 'REPLAY' : 'LIVE'}
+        </span>
 
-          {/* Clock */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-600">
-            <Clock className="w-3.5 h-3.5 text-amber-500" />
-            <div>
-              <span className="text-slate-400 mr-1">UTC:</span>
-              <span className="text-slate-700 font-medium">{utcDisplay}</span>
-            </div>
-            <span className="text-slate-300">|</span>
-            <div>
-              <span className="text-slate-400 mr-1">IST:</span>
-              <span className="text-slate-700 font-medium">{istDisplay}</span>
-            </div>
-          </div>
-
-          {/* Mode */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-sans">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-            <span>{health?.mode === 'replay' ? 'REPLAY STREAM' : 'LIVE STREAM'}</span>
-          </div>
+        <div className="ml-auto flex items-center gap-4 text-ink">
+          <span>
+            <span className="text-ink-faint mr-1.5">UTC</span>
+            {utcDisplay}
+          </span>
+          <span>
+            <span className="text-ink-faint mr-1.5">IST</span>
+            {istDisplay}
+          </span>
         </div>
       </div>
     </header>

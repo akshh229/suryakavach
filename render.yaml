@@ -3,6 +3,8 @@ services:
     name: suryakavach-api
     runtime: docker
     plan: free
+    # Pinned: this repo's default branch is master, but Render assumes main.
+    branch: master
     dockerfilePath: backend/Dockerfile
     dockerContext: .
     envVars:

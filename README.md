@@ -94,12 +94,15 @@ The production deployment runs:
 
 Run this SQL in the Supabase SQL editor:
 
+`end` is a reserved SQL keyword, so it must stay double-quoted in Postgres —
+unquoted it is a syntax error.
+
 ```sql
 CREATE TABLE IF NOT EXISTS flares (
   id TEXT PRIMARY KEY,
   onset TEXT NOT NULL,
   peak TEXT NOT NULL,
-  end TEXT,
+  "end" TEXT,
   class TEXT NOT NULL,
   peak_flux_sxr REAL NOT NULL,
   peak_flux_hxr REAL NOT NULL,

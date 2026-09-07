@@ -1,5 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import Header from './components/Header';
+import OrbitMark from './components/ui/OrbitMark';
 import NowcastBanner from './components/NowcastBanner';
 import TelemetryChart from './components/TelemetryChart';
 import ForecastCards from './components/ForecastCards';
@@ -8,15 +10,26 @@ import FlareCatalogue from './components/FlareCatalogue';
 import ReplayBar from './components/ReplayBar';
 import MetricsPanel from './components/MetricsPanel';
 import AlertCentre from './components/AlertCentre';
-import FlareDetailView from './components/FlareDetailView';
-import { useUIStore } from './store/uiStore';
+import Panel from './components/ui/Panel';
 import { useReplayStore } from './store/replayStore';
 import { useStreams, useNowcast, useForecast, useImpact, useHealth, useReplayDates } from './lib/hooks';
 import { WS_URL } from './lib/constants';
+import { useRouter, isModifiedClick } from './lib/router';
+import type { Screen } from './lib/router';
 import type { Clock } from './types/api';
+import { screenFade, silkPress, staggerContainer, staggerItem, usePrefersReducedMotion } from './lib/motion';
+
+const NAV: { screen: Screen; label: string; href: string }[] = [
+  { screen: 'monitor', label: 'Monitor', href: '/' },
+  { screen: 'replay', label: 'Replay', href: '/replay' },
+  { screen: 'catalogue', label: 'Catalogue', href: '/catalogue' },
+  { screen: 'alerts', label: 'Alerts', href: '/alerts' },
+  { screen: 'methodology', label: 'Methodology', href: '/methodology' },
+];
 
 export default function App() {
-  const { activeScreen } = useUIStore();
+  const { route, go } = useRouter();
+  const reduced = usePrefersReducedMotion();
   const { setPlaying, setSpeed, setCursor, setEventDate, setDates, setMode } = useReplayStore();
 
   const [windowSize, setWindowSize] = useState(120);
@@ -86,17 +99,26 @@ export default function App() {
   };
 
   const renderScreen = () => {
-    switch (activeScreen) {
+    switch (route.screen) {
       case 'monitor':
         return (
-          <>
-            <NowcastBanner nowcastState={nowcastState ?? null} />
-            <TelemetryChart streams={streams ?? null} windowSize={windowSize} onWindowChange={handleWindowChange} />
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <motion.div
+            className="space-y-4"
+            variants={reduced ? undefined : staggerContainer}
+            initial={reduced ? undefined : 'hidden'}
+            animate={reduced ? undefined : 'show'}
+          >
+            <motion.div variants={reduced ? undefined : staggerItem}>
+              <NowcastBanner nowcastState={nowcastState ?? null} />
+            </motion.div>
+            <motion.div variants={reduced ? undefined : staggerItem}>
+              <TelemetryChart streams={streams ?? null} windowSize={windowSize} onWindowChange={handleWindowChange} />
+            </motion.div>
+            <motion.div variants={reduced ? undefined : staggerItem} className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <ForecastCards forecast={forecast ?? null} />
               <ImpactGauge impact={impact ?? null} />
-            </div>
-          </>
+            </motion.div>
+          </motion.div>
         );
       case 'catalogue':
         return <FlareCatalogue />;
@@ -109,30 +131,40 @@ export default function App() {
         );
       case 'alerts':
         return <AlertCentre />;
-      case 'detail':
-        return <FlareDetailView />;
       case 'methodology':
         return (
-          <div className="sk-panel p-8">
-            <h2 className="text-lg font-bold text-slate-700 mb-4">Methodology</h2>
-            <p className="text-sm text-slate-600 mb-4">
-              SURYAKAVACH fuses SoLEXS and HEL1OS payload streams from Aditya-L1 for real-time solar flare nowcasting.
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-              <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl">
-                <h3 className="font-bold text-slate-700 mb-1">BOCPD Detection</h3>
-                <p className="text-slate-500">Bayesian Online Change-Point Detection identifies flux onset in real time.</p>
-              </div>
-              <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl">
-                <h3 className="font-bold text-slate-700 mb-1">Logistic Hazard</h3>
-                <p className="text-slate-500">Calibrated discrete-time logistic hazard model forecasts flare probability over multiple horizons.</p>
-              </div>
-              <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl">
-                <h3 className="font-bold text-slate-700 mb-1">Impact Fusion</h3>
-                <p className="text-slate-500">Weighted fusion of SXR peak, hardness, impulsivity, and duration into a 0-10 impact index.</p>
-              </div>
+          <Panel label="Methodology">
+            <div className="text-sm text-ink-muted max-w-3xl">
+              <p className="mb-4">
+                SURYAKAVACH fuses the SoLEXS and HEL1OS payload streams from Aditya-L1 for
+                real-time solar flare nowcasting. All data shown on this console is from the
+                synthetic fused cache used for offline validation — not live Aditya-L1 telemetry.
+              </p>
             </div>
-          </div>
+            <dl className="grid grid-cols-1 md:grid-cols-3 gap-px bg-rule border border-rule">
+              <div className="bg-panel p-4">
+                <dt className="text-[11px] font-semibold tracking-[0.14em] uppercase text-ink-muted">BOCPD Detection</dt>
+                <dd className="text-xs text-ink-muted mt-2">
+                  Bayesian Online Change-Point Detection identifies flux onset in real time,
+                  producing the P(CP) posterior overlaid on the telemetry chart.
+                </dd>
+              </div>
+              <div className="bg-panel p-4">
+                <dt className="text-[11px] font-semibold tracking-[0.14em] uppercase text-ink-muted">Logistic Hazard</dt>
+                <dd className="text-xs text-ink-muted mt-2">
+                  Calibrated discrete-time logistic hazard model forecasts flare probability over
+                  multiple horizons, with EVT intensity quantiles.
+                </dd>
+              </div>
+              <div className="bg-panel p-4">
+                <dt className="text-[11px] font-semibold tracking-[0.14em] uppercase text-ink-muted">Impact Fusion</dt>
+                <dd className="text-xs text-ink-muted mt-2">
+                  Weighted fusion of SXR peak, hardness, impulsivity, and duration into a 0–10
+                  impact index mapped onto the NOAA R-scale.
+                </dd>
+              </div>
+            </dl>
+          </Panel>
         );
       default:
         return null;
@@ -140,36 +172,84 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-sky-50 text-slate-900 flex flex-col">
+    <div className="min-h-screen bg-surface text-ink md:flex">
       <a href="#main-content" className="skip-link">Skip to main content</a>
-      <Header health={health ?? null} clock={clock} wsConnected={wsConnected} />
 
-      {/* Screen Navigation */}
-      <nav className="max-w-7xl w-full mx-auto px-4 pt-4" aria-label="Main navigation">
-        <div className="flex gap-1 flex-wrap">
-          {(['monitor', 'replay', 'catalogue', 'alerts', 'detail', 'methodology'] as const).map((s) => (
-            <button
-              key={s}
-              onClick={() => useUIStore.getState().setScreen(s)}
-              aria-current={activeScreen === s ? 'page' : undefined}
-              className={`px-4 py-2 text-sm font-semibold rounded-t-lg border-b-2 transition-colors capitalize ${
-                activeScreen === s
-                  ? 'bg-white border-amber-500 text-slate-900'
-                  : 'bg-transparent border-transparent text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              {s}
-            </button>
-          ))}
+      {/* Left rail — brand, navigation, connection state */}
+      <aside className="bg-panel border-b md:border-b-0 border-rule md:border-r md:w-[208px] md:shrink-0 md:sticky md:top-0 md:h-screen flex md:flex-col">
+        <div className="px-4 py-3 md:py-4 border-b border-rule flex items-center gap-2.5">
+          <OrbitMark size={22} />
+          <div>
+            <div className="text-sm font-bold tracking-[0.18em] uppercase">SURYAKAVACH</div>
+            <div className="text-[10px] font-mono-val text-ink-faint mt-1">SIH26209 · ADITYA-L1</div>
+          </div>
         </div>
-      </nav>
 
-      <main id="main-content" className="flex-1 max-w-7xl w-full mx-auto px-4 py-6 space-y-6">
-        {renderScreen()}
-        {activeScreen === 'monitor' && <MetricsPanel />}
-      </main>
+        <nav
+          className="flex md:flex-col gap-0.5 px-2 py-1.5 md:py-3 overflow-x-auto"
+          aria-label="Main navigation"
+        >
+          {NAV.map(({ screen, label, href }) => {
+            const active = route.screen === screen;
+            return (
+              <motion.a
+                key={screen}
+                href={href}
+                aria-current={active ? 'page' : undefined}
+                {...(reduced ? {} : silkPress)}
+                onClick={(e) => {
+                  if (isModifiedClick(e)) return;
+                  e.preventDefault();
+                  go(href);
+                }}
+                className={`whitespace-nowrap px-3 py-1.5 text-[13px] font-medium border-l-2 md:border-l-2 ${
+                  active
+                    ? 'text-accent bg-accent-wash border-accent'
+                    : 'text-ink-muted border-transparent hover:text-ink'
+                }`}
+              >
+                {label}
+              </motion.a>
+            );
+          })}
+        </nav>
 
-      <ReplayBar />
+        <div className="hidden md:block mt-auto px-4 py-3 border-t border-rule text-[10px] font-mono-val text-ink-faint space-y-1">
+          <div className="flex items-center gap-2">
+            <span
+              className="inline-block w-1.5 h-1.5 rounded-full"
+              style={{ backgroundColor: wsConnected ? 'var(--color-ok)' : 'var(--color-alarm)' }}
+              aria-hidden="true"
+            />
+            <span>WS {wsConnected ? 'CONNECTED' : 'OFFLINE'}</span>
+          </div>
+          <div>MODE {health?.mode?.toUpperCase() ?? '—'}</div>
+          <div className="pt-1 text-ink-faint/70">SYNTHETIC CACHE — NOT LIVE ADITYA-L1</div>
+        </div>
+      </aside>
+
+      {/* Content column */}
+      <div className="flex-1 min-w-0 flex flex-col">
+        <Header health={health ?? null} clock={clock} wsConnected={wsConnected} />
+
+        <main id="main-content" className="flex-1 w-full max-w-[1200px] mx-auto p-4 space-y-4">
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={route.screen}
+              className="space-y-4"
+              initial={reduced ? false : screenFade.initial}
+              animate={reduced ? undefined : screenFade.animate}
+              exit={reduced ? undefined : screenFade.exit}
+              transition={reduced ? { duration: 0 } : screenFade.transition}
+            >
+              {renderScreen()}
+              {route.screen === 'monitor' && <MetricsPanel />}
+            </motion.div>
+          </AnimatePresence>
+        </main>
+
+        <ReplayBar />
+      </div>
     </div>
   );
 }
