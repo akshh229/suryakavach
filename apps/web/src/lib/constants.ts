@@ -99,6 +99,13 @@ export const REPLAY = {
   TICK_MS: 500,
 } as const;
 
-// API base
-export const API_BASE = '/api';
-export const WS_URL = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/live`;
+// API base. Same-origin by default: the Vite dev proxy handles it locally and
+// the vercel.json /api rewrite handles it in production, so REST stays CORS-free.
+export const API_BASE = import.meta.env.VITE_API_BASE ?? '/api';
+
+// Vercel rewrites do NOT proxy WebSocket upgrades, so in production this must
+// point straight at the API host. VITE_WS_URL is set in .env.production; the
+// same-origin fallback is for local dev, where the Vite proxy forwards /ws.
+export const WS_URL =
+  import.meta.env.VITE_WS_URL ??
+  `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/live`;
