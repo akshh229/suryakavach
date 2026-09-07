@@ -22,6 +22,14 @@ export function goesClassColor(flux: number): string {
   return GOES_CLASSES[0].color;
 }
 
+/** Pale tint of the matching GOES class, for cell/badge washes. */
+export function goesClassBg(flux: number): string {
+  for (let i = GOES_CLASSES.length - 1; i >= 0; i--) {
+    if (flux >= GOES_CLASSES[i].threshold) return GOES_CLASSES[i].bg;
+  }
+  return GOES_CLASSES[0].bg;
+}
+
 // NOAA R-scale severity mapping from impact index
 export const R_SCALE = [
   { level: 'R0', min: 0, max: 2, color: '#16a34a', label: 'Minor' },

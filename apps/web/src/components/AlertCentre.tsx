@@ -15,7 +15,7 @@ export default function AlertCentre() {
   const alerts: Alert[] = data ?? [];
 
   return (
-    <Panel label="Alert Centre" meta={<span>{alerts.length} alerts</span>}>
+    <Panel label="Alert Centre" meta={<span>{alerts.length} alerts</span>} tone="#dc2626">
       {isLoading ? (
         <div className="text-center text-ink-faint py-8 text-xs font-mono-val">Loading alerts…</div>
       ) : alerts.length === 0 ? (
@@ -25,12 +25,16 @@ export default function AlertCentre() {
       ) : (
         <div className="divide-y divide-rule border border-rule" role="log" aria-live="polite" aria-label="Alert feed">
           {alerts.map((alert) => {
-            const color = SEVERITY_COLORS[alert.severity] ?? 'var(--color-ink-muted)';
+            const color = SEVERITY_COLORS[alert.severity] ?? '#8b8f96';
             return (
-              <div key={alert.id} className="flex items-start gap-3 px-3 py-2.5 bg-panel">
+              <div
+                key={alert.id}
+                className="flex items-start gap-3 px-3 py-2.5 bg-panel border-l-2"
+                style={{ borderLeftColor: color }}
+              >
                 <span
                   className="mt-0.5 text-[10px] font-bold px-1.5 py-0.5 border font-mono-val shrink-0"
-                  style={{ color, borderColor: color }}
+                  style={{ color, borderColor: color, backgroundColor: `${color}14` }}
                 >
                   {alert.severity}
                 </span>

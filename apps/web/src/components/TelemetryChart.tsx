@@ -206,6 +206,7 @@ export default function TelemetryChart({ streams, windowSize, onWindowChange }: 
   return (
     <Panel
       label="X-Ray Telemetry — Aditya-L1"
+      tone={SERIES_COLORS.sxr}
       meta={
         <>
           <span>{solexs.length} pts</span>

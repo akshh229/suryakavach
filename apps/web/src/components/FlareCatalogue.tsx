@@ -6,7 +6,7 @@ import { api } from '../lib/api';
 import Panel from './ui/Panel';
 import Metric from './ui/Metric';
 import type { CatalogueData, FlareDetail } from '../types/api';
-import { goesClassColor, SERIES_COLORS, CHART_COLORS } from '../lib/constants';
+import { goesClassColor, goesClassBg, SERIES_COLORS, CHART_COLORS } from '../lib/constants';
 import { useRouter, isModifiedClick, catalogueUrl } from '../lib/router';
 import { detailSlide, usePrefersReducedMotion } from '../lib/motion';
 
@@ -143,6 +143,7 @@ export default function FlareCatalogue() {
   return (
     <Panel
       label="Flare Catalogue"
+      tone="#b45309"
       meta={<span>{total} events · synthetic cache</span>}
     >
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
@@ -235,7 +236,10 @@ export default function FlareCatalogue() {
                     </td>
                     <td className="px-3 py-2 text-ink-muted">{fmtTs(row.onset)}</td>
                     <td className="px-3 py-2 text-ink-muted">{fmtTs(row.peak)}</td>
-                    <td className="px-3 py-2 font-bold" style={{ color: goesClassColor(row.peak_flux_sxr) }}>
+                    <td
+                      className="px-3 py-2 font-bold"
+                      style={{ color: goesClassColor(row.peak_flux_sxr), backgroundColor: goesClassBg(row.peak_flux_sxr) }}
+                    >
                       {row.class || 'A0.0'}
                     </td>
                     <td className="px-3 py-2 text-right text-ink-muted">

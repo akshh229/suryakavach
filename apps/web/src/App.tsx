@@ -142,21 +142,21 @@ export default function App() {
               </p>
             </div>
             <dl className="grid grid-cols-1 md:grid-cols-3 gap-px bg-rule border border-rule">
-              <div className="bg-panel p-4">
+              <div className="bg-panel p-4 border-l-2 border-l-[#6d28d9]">
                 <dt className="text-[11px] font-semibold tracking-[0.14em] uppercase text-ink-muted">BOCPD Detection</dt>
                 <dd className="text-xs text-ink-muted mt-2">
                   Bayesian Online Change-Point Detection identifies flux onset in real time,
                   producing the P(CP) posterior overlaid on the telemetry chart.
                 </dd>
               </div>
-              <div className="bg-panel p-4">
+              <div className="bg-panel p-4 border-l-2 border-l-[#d97706]">
                 <dt className="text-[11px] font-semibold tracking-[0.14em] uppercase text-ink-muted">Logistic Hazard</dt>
                 <dd className="text-xs text-ink-muted mt-2">
                   Calibrated discrete-time logistic hazard model forecasts flare probability over
                   multiple horizons, with EVT intensity quantiles.
                 </dd>
               </div>
-              <div className="bg-panel p-4">
+              <div className="bg-panel p-4 border-l-2 border-l-[#dc2626]">
                 <dt className="text-[11px] font-semibold tracking-[0.14em] uppercase text-ink-muted">Impact Fusion</dt>
                 <dd className="text-xs text-ink-muted mt-2">
                   Weighted fusion of SXR peak, hardness, impulsivity, and duration into a 0–10
@@ -175,13 +175,14 @@ export default function App() {
     <div className="min-h-screen bg-surface text-ink md:flex">
       <a href="#main-content" className="skip-link">Skip to main content</a>
 
-      {/* Left rail — brand, navigation, connection state */}
-      <aside className="bg-panel border-b md:border-b-0 border-rule md:border-r md:w-[208px] md:shrink-0 md:sticky md:top-0 md:h-screen flex md:flex-col">
-        <div className="px-4 py-3 md:py-4 border-b border-rule flex items-center gap-2.5">
-          <OrbitMark size={22} />
+      {/* Left rail — brand, navigation, connection state. Deep ink so the
+          console reads as an instrument; amber marks the current screen. */}
+      <aside className="bg-rail border-b md:border-b-0 border-rail-rule md:border-r md:w-[208px] md:shrink-0 md:sticky md:top-0 md:h-screen flex md:flex-col">
+        <div className="px-4 py-3 md:py-4 border-b border-rail-rule flex items-center gap-2.5">
+          <OrbitMark size={22} dark />
           <div>
-            <div className="text-sm font-bold tracking-[0.18em] uppercase">SURYAKAVACH</div>
-            <div className="text-[10px] font-mono-val text-ink-faint mt-1">SIH26209 · ADITYA-L1</div>
+            <div className="text-sm font-bold tracking-[0.18em] uppercase text-white">SURYAKAVACH</div>
+            <div className="text-[10px] font-mono-val text-rail-ink-faint mt-1">SIH26209 · ADITYA-L1</div>
           </div>
         </div>
 
@@ -204,8 +205,8 @@ export default function App() {
                 }}
                 className={`whitespace-nowrap px-3 py-1.5 text-[13px] font-medium border-l-2 md:border-l-2 ${
                   active
-                    ? 'text-accent bg-accent-wash border-accent'
-                    : 'text-ink-muted border-transparent hover:text-ink'
+                    ? 'text-accent bg-white/[0.06] border-accent'
+                    : 'text-rail-ink border-transparent hover:text-white hover:bg-white/[0.03]'
                 }`}
               >
                 {label}
@@ -214,17 +215,19 @@ export default function App() {
           })}
         </nav>
 
-        <div className="hidden md:block mt-auto px-4 py-3 border-t border-rule text-[10px] font-mono-val text-ink-faint space-y-1">
+        <div className="hidden md:block mt-auto px-4 py-3 border-t border-rail-rule text-[10px] font-mono-val text-rail-ink-faint space-y-1">
           <div className="flex items-center gap-2">
             <span
               className="inline-block w-1.5 h-1.5 rounded-full"
               style={{ backgroundColor: wsConnected ? 'var(--color-ok)' : 'var(--color-alarm)' }}
               aria-hidden="true"
             />
-            <span>WS {wsConnected ? 'CONNECTED' : 'OFFLINE'}</span>
+            <span className={wsConnected ? 'text-ok' : 'text-alarm'}>
+              WS {wsConnected ? 'CONNECTED' : 'OFFLINE'}
+            </span>
           </div>
-          <div>MODE {health?.mode?.toUpperCase() ?? '—'}</div>
-          <div className="pt-1 text-ink-faint/70">SYNTHETIC CACHE — NOT LIVE ADITYA-L1</div>
+          <div className="text-rail-ink">MODE {health?.mode?.toUpperCase() ?? '—'}</div>
+          <div className="pt-1 text-rail-ink-faint/70">SYNTHETIC CACHE — NOT LIVE ADITYA-L1</div>
         </div>
       </aside>
 

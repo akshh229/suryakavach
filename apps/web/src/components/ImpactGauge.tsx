@@ -61,6 +61,7 @@ export default function ImpactGauge({ impact }: ImpactGaugeProps) {
   return (
     <Panel
       label="Radiation Impact"
+      tone={color}
       meta={
         <span className="font-bold" style={{ color }}>
           {rLvl} · {impact?.band ?? '—'}
@@ -147,6 +148,7 @@ export default function ImpactGauge({ impact }: ImpactGaugeProps) {
                       style={{
                         color: alarm ? 'var(--color-alarm)' : 'var(--color-ok)',
                         borderColor: alarm ? 'var(--color-alarm)' : 'var(--color-ok)',
+                        backgroundColor: alarm ? '#fef2f2' : '#f0fdf4',
                       }}
                     >
                       {risk}

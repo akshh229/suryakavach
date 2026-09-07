@@ -5,10 +5,10 @@
  * prefers-reduced-motion (handled by the global reduced-motion rule,
  * which kills the keyframe animation and leaves a static tilted mark).
  */
-export default function OrbitMark({ size = 22 }: { size?: number }) {
+export default function OrbitMark({ size = 22, dark = false }: { size?: number; dark?: boolean }) {
   return (
     <span
-      className="sk-orbit"
+      className={`sk-orbit${dark ? ' sk-orbit-dark' : ''}`}
       style={{ width: size, height: size }}
       aria-hidden="true"
     >

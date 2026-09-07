@@ -49,7 +49,13 @@ export default function Header({ health, clock, wsConnected }: HeaderProps) {
           </span>
         </div>
 
-        <span className="text-ink">
+        <span
+          className={`px-1.5 py-0.5 border font-bold tracking-[0.08em] ${
+            health?.mode === 'replay'
+              ? 'text-warn border-warn bg-[#fffbeb]'
+              : 'text-ok border-ok bg-[#f0fdf4]'
+          }`}
+        >
           {health?.mode === 'replay' ? 'REPLAY' : 'LIVE'}
         </span>
 

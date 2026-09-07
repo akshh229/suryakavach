@@ -45,7 +45,7 @@ function HorizonRow({ horizon }: { horizon: ForecastHorizon }) {
       <td className="px-3 py-2.5 text-right">
         <span
           className="text-[10px] font-bold px-1.5 py-0.5 border font-mono-val"
-          style={{ color, borderColor: color }}
+          style={{ color, borderColor: color, backgroundColor: `${color}14` }}
         >
           {badgeLabel}
         </span>
@@ -63,7 +63,7 @@ export default function ForecastCards({ forecast }: ForecastCardsProps) {
   const horizons = forecast?.horizons ?? [];
 
   return (
-    <Panel label="Flare Hazard Forecast" meta={<span>logistic hazard + EVT</span>}>
+    <Panel label="Flare Hazard Forecast" meta={<span>logistic hazard + EVT</span>} tone="#6d28d9">
       {horizons.length === 0 ? (
         <p className="text-xs font-mono-val text-ink-faint py-6 text-center">No forecast horizons available.</p>
       ) : (

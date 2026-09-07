@@ -31,9 +31,9 @@ function CohortRow({ cohort, targetTss }: { cohort: Cohort; targetTss: number })
       </td>
       <td className="px-3 py-2 text-right text-[11px] font-semibold">
         {meetsTarget ? (
-          <span className="text-ok">MEETS ≥ {targetTss}</span>
+          <span className="text-ok px-1.5 py-0.5 border border-ok bg-[#f0fdf4]">MEETS ≥ {targetTss}</span>
         ) : (
-          <span className="text-alarm">BELOW ≥ {targetTss}</span>
+          <span className="text-alarm px-1.5 py-0.5 border border-alarm bg-[#fef2f2]">BELOW ≥ {targetTss}</span>
         )}
       </td>
     </tr>
@@ -49,7 +49,7 @@ function CohortRow({ cohort, targetTss }: { cohort: Cohort; targetTss: number })
  */
 export default function MetricsPanel() {
   return (
-    <Panel label="Offline Validation" meta={<span>synthetic fused SoLEXS/HEL1OS cache</span>}>
+    <Panel label="Offline Validation" meta={<span>synthetic fused SoLEXS/HEL1OS cache</span>} tone="#16a34a">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 overflow-x-auto">
           <table className="w-full text-xs">
@@ -76,7 +76,7 @@ export default function MetricsPanel() {
           </p>
         </div>
 
-        <div className="border border-rule p-4 flex flex-col justify-center gap-4">
+        <div className="border border-accent/40 bg-accent-wash p-4 flex flex-col justify-center gap-4">
           <div>
             <div className="text-[10px] uppercase tracking-[0.12em] text-ink-faint">Mean onset lead</div>
             <div className="mt-1 text-2xl font-bold font-mono-val tabular-nums">

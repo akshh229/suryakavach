@@ -35,7 +35,7 @@ export default function ReplayBar() {
 
   return (
     <footer
-      className="bg-panel border-t border-rule sticky bottom-0 z-30 px-4 py-2.5"
+      className="bg-accent-wash/60 border-t border-rule sticky bottom-0 z-30 px-4 py-2.5"
       role="toolbar"
       aria-label="Replay controls"
     >

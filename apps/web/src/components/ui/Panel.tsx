@@ -5,6 +5,12 @@ interface PanelProps {
   label: string;
   /** Right-aligned slot on the label rule: counts, badges, small controls. */
   meta?: ReactNode;
+  /**
+   * Data colour for the label chip (a small square before the label).
+   * Use it to echo what the panel measures — series colour, R-scale,
+   * severity — never decoration.
+   */
+  tone?: string;
   children: ReactNode;
   className?: string;
 }
@@ -13,11 +19,18 @@ interface PanelProps {
  * The one panel chrome in the console: a hairline-ruled box titled by a
  * single uppercase label. No icon, no subtitle, no shadow.
  */
-export default function Panel({ label, meta, children, className = '' }: PanelProps) {
+export default function Panel({ label, meta, tone, children, className = '' }: PanelProps) {
   return (
     <section className={`sk-panel ${className}`}>
       <header className="flex items-center justify-between gap-4 px-4 py-2 border-b border-rule">
-        <h2 className="text-[11px] font-semibold tracking-[0.14em] uppercase text-ink-muted">
+        <h2 className="flex items-center gap-2 text-[11px] font-semibold tracking-[0.14em] uppercase text-ink-muted">
+          {tone && (
+            <span
+              className="inline-block w-2 h-2 shrink-0"
+              style={{ backgroundColor: tone }}
+              aria-hidden="true"
+            />
+          )}
           {label}
         </h2>
         {meta && (
