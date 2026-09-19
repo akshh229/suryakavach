@@ -5,6 +5,7 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.integrate import trapezoid
 
 from suryakavach.engines.bocpd import BOCPD
 from suryakavach.engines.neupert import neupert_correlation
@@ -178,7 +179,9 @@ def _finalize(ev: FlareEvent, sxr: NDArray[np.float64], hxr: NDArray[np.float64]
     ev.end_idx = end
     ev.state = "end"
     sl = slice(ev.onset_idx, end + 1)
-    ev.integrated_flux = float(np.trapezoid(sxr[sl], dx=60.0))
+    # Use SciPy's stable helper: NumPy 1.x lacks ``trapezoid`` while NumPy 2.x
+    # removed ``trapz``. SciPy is already a pinned runtime dependency.
+    ev.integrated_flux = float(trapezoid(sxr[sl], dx=60.0))
     dur = max(end - ev.onset_idx, 1)
     ev.hardness = float(ev.peak_flux_hxr / max(ev.peak_flux_sxr, 1e-12))
     ev.impulsivity = float(ev.peak_flux_sxr / max(dur, 1) * 1e6)
@@ -211,7 +214,7 @@ def _baseline_events(sxr: NDArray[np.float64], hxr: NDArray[np.float64], thr: fl
                     peak_flux_hxr=float(hxr[peak_i]),
                     hardness=float(hxr[peak_i] / max(sxr[peak_i], 1e-12)),
                     impulsivity=float(sxr[peak_i] / max(i - start, 1) * 1e6),
-                    integrated_flux=float(np.trapezoid(sxr[start : i + 1], dx=60.0)),
+                    integrated_flux=float(trapezoid(sxr[start : i + 1], dx=60.0)),
                     class_label=goes_class(float(sxr[peak_i])),
                     detection_method="threshold",
                 )
