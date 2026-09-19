@@ -407,12 +407,17 @@ def get_metrics(
 ):
     require_ready()
     conn = runtime.conn
-    if run_id:
-        from suryakavach.db import get_evaluation_run_by_id
-        run_data = get_evaluation_run_by_id(conn, run_id)
-    else:
-        from suryakavach.db import get_latest_evaluation_run
-        run_data = get_latest_evaluation_run(conn, source_cohort=cohort)
+    try:
+        if run_id:
+            from suryakavach.db import get_evaluation_run_by_id
+            run_data = get_evaluation_run_by_id(conn, run_id)
+        else:
+            from suryakavach.db import get_latest_evaluation_run
+            run_data = get_latest_evaluation_run(conn, source_cohort=cohort)
+    except Exception:
+        # A remote evaluation store may be unavailable or not migrated yet.
+        # The endpoint can still serve deterministic local metrics.
+        run_data = None
 
     if not run_data:
         json_p = Path("reports/evaluation_latest.json")
@@ -437,7 +442,14 @@ def get_metrics(
         elif cohort:
             raise NotFound(f"Evaluation run for cohort '{cohort}' not found")
         else:
-            raise NotFound("No evaluation run available")
+            from suryakavach.evaluate import run_evaluation
+            eval_run = run_evaluation(
+                source_cohort=cohort or "synthetic",
+                cfg=runtime.cfg,
+                days=runtime.days,
+                save_db=False,
+            )
+            run_data = eval_run.to_dict()
 
     created_at_str = run_data.get("created_at", "")
     age_seconds = 0
