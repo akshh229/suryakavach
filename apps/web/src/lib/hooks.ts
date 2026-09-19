@@ -21,6 +21,8 @@ import type {
   PradanPollBody,
   PradanDiscoverResult,
   PradanScheduleState,
+  GoesLivePayload,
+  GoesLiveStatus,
 } from '../types/api';
 
 export function useStreams(windowSize: number) {
@@ -238,4 +240,45 @@ export function usePradanSchedule() {
       onSuccess: refresh,
     }),
   };
+}
+
+/**
+ * GOES XRS live source (additive; replay hooks above are untouched).
+ * Server does stale-while-revalidate (refreshes when older than 5 min),
+ * so a 60 s refetch here stays cheap and never hammers NOAA.
+ */
+
+/** Availability probe — never triggers a fetch. */
+export function useGoesLiveStatus(enabled: boolean = true) {
+  return useQuery({
+    queryKey: ['goesLiveStatus'],
+    queryFn: () => api.get<GoesLiveStatus>('/api/live/goes/status'),
+    enabled,
+    staleTime: 60_000,
+    refetchInterval: enabled ? 60_000 : false,
+  });
+}
+
+/** Live series + nowcast + forecast + impact in one payload. */
+export function useGoesLive(windowSize: number, enabled: boolean = true) {
+  return useQuery({
+    queryKey: ['goesLive', windowSize],
+    queryFn: () => api.get<GoesLivePayload>(`/api/live/goes?window=${windowSize}`),
+    enabled,
+    staleTime: 60_000,
+    refetchInterval: enabled ? 60_000 : false,
+  });
+}
+
+/** Force a fresh NOAA fetch + nowcast (blocking, may take seconds). */
+export function useGoesRefresh() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<GoesLiveStatus>('/api/live/goes/refresh'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['goesLive'] });
+      queryClient.invalidateQueries({ queryKey: ['goesLiveStatus'] });
+      queryClient.invalidateQueries({ queryKey: ['health'] });
+    },
+  });
 }

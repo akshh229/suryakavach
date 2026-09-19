@@ -144,12 +144,48 @@ async def lifespan(app: FastAPI):
     # /api/health immediately instead of the platform's health check timing out.
     await asyncio.to_thread(runtime.boot)
     task = asyncio.create_task(_sim_loop())
+    live_task = asyncio.create_task(_goes_live_loop())
     try:
         yield
     finally:
         task.cancel()
+        live_task.cancel()
         with suppress(asyncio.CancelledError):
             await task
+        with suppress(asyncio.CancelledError):
+            await live_task
+
+
+def _goes_refresh_minutes() -> float:
+    try:
+        return max(1.0, float((cfg.get("goes_live") or {}).get("refresh_interval_min", 5.0)))
+    except (TypeError, ValueError):
+        return 5.0
+
+
+async def _goes_live_loop():
+    """Background auto-refresh: new NOAA data -> snapshot -> push to dashboards.
+
+    One polite GET per interval; any failure is logged and the loop continues
+    so a transient outage never kills auto-update for the process lifetime.
+    """
+    await asyncio.sleep(10.0)  # let boot + first clients settle
+    while True:
+        await asyncio.sleep(_goes_refresh_minutes() * 60.0)
+        try:
+            status = await asyncio.to_thread(runtime.refresh_live)
+            await _broadcast(
+                {
+                    "live": status,
+                    "clock": {
+                        "utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    },
+                }
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("goes live auto-refresh failed; continuing")
 
 
 app = FastAPI(
@@ -623,6 +659,50 @@ def pradan_schedule_stop():
     from suryakavach.ingest import pradan_live
 
     return runtime.envelope(pradan_live.scheduler.stop())
+
+
+@app.get("/api/live/goes")
+async def goes_live(window: int = Query(180, ge=10, le=1440)):
+    """Live GOES XRS snapshot: streams + nowcast + forecast + impact.
+
+    Stale-while-revalidate: serves the cached snapshot immediately; refreshes
+    in the background when older than 5 minutes. First call ever triggers a
+    synchronous refresh (may take seconds on the NOAA fetch).
+    """
+    require_ready()
+    status = runtime.live_status()
+    from suryakavach.ingest.goes_live import is_stale
+
+    if not status.get("available") or is_stale(status.get("fetched_at"), _goes_refresh_minutes()):
+        try:
+            await asyncio.to_thread(runtime.refresh_live)
+        except Exception as exc:
+            if not status.get("available"):
+                raise BadRequest(f"live refresh failed: {exc}") from exc
+    try:
+        payload = runtime.live_payload(window)
+    except RuntimeError as exc:
+        raise BadRequest(str(exc)) from exc
+    return runtime.envelope(payload, {"source": "noaa.goes.xrs", "live": True})
+
+
+@app.post("/api/live/goes/refresh")
+async def goes_live_refresh():
+    """Force a fresh GOES XRS fetch + nowcast, and push it to dashboards."""
+    require_ready()
+    try:
+        status = await asyncio.to_thread(runtime.refresh_live)
+    except Exception as exc:
+        raise BadRequest(f"live refresh failed: {exc}") from exc
+    await _broadcast({"live": status})
+    return runtime.envelope(status, {"source": "noaa.goes.xrs", "live": True})
+
+
+@app.get("/api/live/goes/status")
+def goes_live_status():
+    """Live-source availability without triggering a fetch."""
+    require_ready()
+    return runtime.envelope(runtime.live_status(), {"source": "noaa.goes.xrs"})
 
 
 @app.websocket("/ws/live")

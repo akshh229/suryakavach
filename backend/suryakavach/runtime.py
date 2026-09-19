@@ -89,6 +89,16 @@ class Runtime:
         self._gap_latched = False
         self.booted = False
         self.boot_error: str | None = None
+        # GOES XRS live snapshot (independent of the synthetic replay cache).
+        # Populated on demand by refresh_live() (network) or from the last
+        # persisted real_days/ snapshot at boot (no network). Never part of
+        # forecast training (live has no versioned labels: truth == []).
+        self.live_day: dict | None = None
+        self.live_key: str | None = None
+        self.live_nowcast: Any | None = None
+        self.live_meta: dict | None = None
+        self.live_error: str | None = None
+        self.live_fetched_at: str | None = None
         if boot:
             self.boot()
 
@@ -105,6 +115,7 @@ class Runtime:
             return
         try:
             self.days = self._build_preferred_days()
+            self._load_persisted_live()
             self._fit_forecast()
             self._run_all_nowcasts()
             self._persist_flares()
@@ -186,7 +197,13 @@ class Runtime:
         xs = []
         yc = []
         ym = []
-        for day in self.days.values():
+        fit_days = list(self.days.values())
+        # Observed GOES live day joins training once it carries versioned
+        # labels (goes-threshold-v1). Synthetic days keep the model grounded;
+        # the live day adapts it to real flux levels.
+        if self.live_day and self.live_day.get("truth"):
+            fit_days.append(self.live_day)
+        for day in fit_days:
             if day.get("source_state") not in {"synthetic", "observed_calibrated"} or not day.get("truth"):
                 continue
             sxr = _ffill(day["solexs"])
@@ -289,6 +306,217 @@ class Runtime:
         """State of the current replay data, never inferred from a filename."""
         return str(self.day().get("source_state", "synthetic"))
 
+    # ---- GOES XRS live source (independent of the synthetic replay cache) ----
+
+    def _load_persisted_live(self) -> None:
+        """Best-effort reload of the last GOES snapshot (boot, no network)."""
+        try:
+            from suryakavach.ingest.goes_live import load_latest_persisted
+        except Exception:  # pragma: no cover - import should not break boot
+            return
+        try:
+            found = load_latest_persisted(self.data_path)
+        except Exception:
+            return
+        if not found:
+            return
+        key, day = found
+        try:
+            nc = run_nowcast(_ffill(day["solexs"]), _ffill(day["hel1os"]), self.cfg)
+        except Exception:
+            return
+        with self.lock:
+            self.live_key = key
+            self.live_day = day
+            self.live_nowcast = nc
+            self.live_meta = {"persisted_day": key, "network": False}
+            self.live_fetched_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def refresh_live(self) -> dict:
+        """Fetch GOES XRS, label, re-run nowcast, and refit forecast (blocking)."""
+        from suryakavach.ingest.goes_live import refresh_goes_live
+
+        try:
+            key, day, meta = refresh_goes_live(self.data_path)
+        except Exception as exc:
+            with self.lock:
+                self.live_error = f"{type(exc).__name__}: {exc}"
+            raise
+        with self.lock:
+            self.live_key = key
+            self.live_day = day
+            self.live_meta = meta
+            self.live_error = None
+            self.live_fetched_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            # Refit so the forecast learns from the new observed labels too.
+            # _fit_forecast is deterministic (SGD from zeros), ~seconds.
+            try:
+                self._fit_forecast()
+            except Exception as exc:  # keep the fresh snapshot even if fit fails
+                self.live_error = f"fit: {type(exc).__name__}: {exc}"
+            self.live_nowcast = run_nowcast(_ffill(day["solexs"]), _ffill(day["hel1os"]), self.cfg)
+        return self.live_status()
+
+    def live_status(self) -> dict:
+        with self.lock:
+            day = self.live_day
+            nc = self.live_nowcast
+        if day is None:
+            return {
+                "available": False,
+                "source": "noaa.goes.xrs",
+                "error": self.live_error,
+                "fetched_at": self.live_fetched_at,
+            }
+        from suryakavach.ingest.goes_live import day_age_minutes
+
+        events = [
+            {
+                "id": f"live-{ev.id}",
+                "onset": iso(day["ts"][ev.onset_idx]),
+                "peak": iso(day["ts"][ev.peak_idx]),
+                "end": iso(day["ts"][ev.end_idx]) if ev.end_idx is not None else None,
+                "class": ev.class_label,
+                "peak_flux_sxr": ev.peak_flux_sxr,
+                "detection_method": ev.detection_method,
+                "state": ev.state,
+            }
+            for ev in (nc.events if nc else [])
+        ]
+        return {
+            "available": True,
+            "source": "noaa.goes.xrs",
+            "day": self.live_key,
+            "fetched_at": self.live_fetched_at,
+            "latest_source_ts": day.get("latest_source_ts"),
+            "age_minutes": round(day_age_minutes(day), 1),
+            "points": len(day["ts"]),
+            "quality_minutes": int(day["quality"].sum()),
+            "source_state": day.get("source_state"),
+            "provenance": day.get("provenance"),
+            "labels": {
+                "recipe": "goes-threshold-v1",
+                "count": len(day.get("truth") or []),
+                "manifest": (self.live_meta or {}).get("label_manifest"),
+                "note": "Threshold-derived from the same XRS series: forecast supervision only.",
+            },
+            "forecast_training": "synthetic cache + this observed day",
+            "meta": self.live_meta,
+            "events": events,
+            "event_count": len(events),
+            "error": self.live_error,
+        }
+
+    def live_payload(self, window: int = 180) -> dict:
+        """Live streams + nowcast + forecast + impact for the GOES snapshot."""
+        with self.lock:
+            day = self.live_day
+            nc = self.live_nowcast
+        if day is None or nc is None:
+            raise RuntimeError("live snapshot unavailable; POST /api/live/goes/refresh first")
+        n = len(day["ts"])
+        i0 = max(0, n - max(10, min(int(window), 1440)))
+        sl = slice(i0, n)
+        sxr = _ffill(day["solexs"])
+        hxr = _ffill(day["hel1os"])
+        active = None
+        if nc.events:
+            last = nc.events[-1]
+            active = {
+                "id": f"live-{last.id}",
+                "onset": iso(day["ts"][last.onset_idx]),
+                "peak": iso(day["ts"][last.peak_idx]),
+                "end": iso(day["ts"][last.end_idx]) if last.end_idx is not None else None,
+                "state": last.state,
+                "class": last.class_label,
+                "peak_flux_sxr": last.peak_flux_sxr,
+                "peak_flux_hxr": last.peak_flux_hxr,
+                "detection_method": last.detection_method,
+                "posterior": last.posterior_at_onset,
+            }
+        # Forecast uses the hazard trained on synthetic + observed labels,
+        # applied to live features.
+        last_onset = nc.events[-1].onset_idx if nc.events else None
+        feat = rolling_features(sxr, hxr, last_flare_idx=last_onset)
+        forecast = self.hazard.predict(feat, list(self.cfg["horizons"]))
+        if nc.events:
+            peak = max(float(e.peak_flux_sxr) for e in nc.events)
+            dur = max(int((e.end_idx or e.peak_idx) - e.onset_idx) for e in nc.events)
+            last_ev = nc.events[-1]
+            impact = compute_impact(
+                peak,
+                last_ev.hardness,
+                last_ev.impulsivity,
+                max(dur, 1),
+                self.cfg["impact"]["weights"],
+                self.cfg["impact"]["suit_available"],
+            )
+            sev = map_severity(impact["index"], self.cfg["severity_bands"])
+            impact_out: dict = {
+                "index": impact["index"],
+                "band": sev["band"],
+                "r_level": sev["r_level"],
+                "g_level": "G0",
+                "s_level": "S0",
+                "subscores": impact["subscores"],
+                "weights_used": impact["weights_used"],
+                "note": "GOES XRS live proxy; forecast trained on synthetic + observed labels.",
+            }
+        else:
+            quiet = compute_impact(
+                float(np.max(sxr[-60:])), 0.1, 0.0, 1,
+                self.cfg["impact"]["weights"], self.cfg["impact"]["suit_available"],
+            )
+            sev = map_severity(quiet["index"], self.cfg["severity_bands"])
+            impact_out = {
+                "index": quiet["index"],
+                "band": sev["band"],
+                "r_level": sev["r_level"],
+                "g_level": "G0",
+                "s_level": "S0",
+                "subscores": quiet["subscores"],
+                "weights_used": quiet["weights_used"],
+                "note": "No live event in window; background GOES flux.",
+            }
+        from suryakavach.ingest.goes_live import day_age_minutes
+
+        return {
+            "source": "noaa.goes.xrs",
+            "source_state": "observed_calibrated",
+            "day": self.live_key,
+            "fetched_at": self.live_fetched_at,
+            "latest_source_ts": day.get("latest_source_ts"),
+            "age_minutes": round(day_age_minutes(day), 1),
+            "provenance": day.get("provenance"),
+            "series": {
+                "solexs": [
+                    {"t": iso(t), "v": None if np.isnan(v) else float(v)}
+                    for t, v in zip(day["ts"][sl], day["solexs"][sl])
+                ],
+                "hel1os": [
+                    {"t": iso(t), "v": None if np.isnan(v) else float(v)}
+                    for t, v in zip(day["ts"][sl], day["hel1os"][sl])
+                ],
+                "quality": [int(x) for x in day["quality"][sl]],
+            },
+            "nowcast": {
+                "state": nc.state,
+                "active": active,
+                "event_count": len(nc.events),
+            },
+            "forecast": forecast,
+            "impact": impact_out,
+            "labels": {
+                "recipe": "goes-threshold-v1",
+                "count": len(day.get("truth") or []),
+            },
+            "disclaimer": (
+                "GOES XRS calibrated proxy, NOT Aditya-L1; "
+                "forecast trained on synthetic cache plus this observed day "
+                "(threshold-derived labels, supervision only)."
+            ),
+        }
+
     def impact_scale(self) -> dict:
         """The sole API contract for impact bands and configured weights."""
         lower = 0.0
@@ -354,6 +582,13 @@ class Runtime:
             "mode": self.mode,
             "playing": self.playing,
             "speed": self.speed,
+            "live": {
+                "available": self.live_day is not None,
+                "source": "noaa.goes.xrs",
+                "day": self.live_key,
+                "fetched_at": self.live_fetched_at,
+                "error": self.live_error,
+            },
         }
         if self.boot_error:
             out["error"] = self.boot_error
