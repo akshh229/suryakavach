@@ -16,17 +16,20 @@ def _can_import_torch() -> bool:
         res = subprocess.run(
             [sys.executable, "-c", "import torch"],
             capture_output=True,
-            timeout=5,
+            timeout=20,
         )
         return res.returncode == 0
     except Exception:
         return False
 
 
+if not _can_import_torch():
+    pytest.skip("PyTorch is not importable without C exception", allow_module_level=True)
+
 try:
     import torch
-except (ImportError, OSError):
-    pytest.skip("PyTorch DLL dependencies are not loadable on this host", allow_module_level=True)
+except (ImportError, OSError, RuntimeError) as exc:
+    pytest.skip(f"PyTorch failed to load in test runner: {exc}", allow_module_level=True)
 
 
 
