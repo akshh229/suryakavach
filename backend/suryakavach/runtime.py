@@ -119,6 +119,7 @@ class Runtime:
             self._fit_forecast()
             self._run_all_nowcasts()
             self._persist_flares()
+            self._seed_baseline_evaluation()
             self.engine_status = {k: "ok" for k in self.engine_status}
         except Exception as exc:  # pragma: no cover - defensive boot guard
             self.boot_error = f"{type(exc).__name__}: {exc}"
@@ -298,6 +299,34 @@ class Runtime:
         if flush:
             flush()
         self.conn.commit()
+
+    def _seed_baseline_evaluation(self) -> None:
+        """Persist one baseline evaluation run so /api/metrics never 404s.
+
+        Fresh databases (local sqlite, new Supabase project) have zero rows
+        in evaluation_runs, which made the Forecast tab's MetricsPanel render
+        "Failed to load evaluation metrics". Seeding is idempotent (stable
+        id + INSERT OR REPLACE, skipped when any run exists) and best-effort:
+        any failure is swallowed so boot stays green.
+        """
+        try:
+            from suryakavach.db import get_latest_evaluation_run, save_evaluation_run
+            from suryakavach.evaluate import run_evaluation
+
+            if get_latest_evaluation_run(self.conn) is not None:
+                return
+            run = run_evaluation(
+                source_cohort="synthetic",
+                split_id="synthetic-demo",
+                cfg=self.cfg,
+                days=self.days,
+                save_db=False,
+            )
+            data = run.to_dict()
+            data["id"] = "boot-baseline-synthetic-v1"
+            save_evaluation_run(self.conn, data)
+        except Exception:
+            pass  # metrics seeding must never break boot
 
     def available_dates(self) -> list[str]:
         return sorted(self.days.keys())
