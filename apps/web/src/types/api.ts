@@ -158,6 +158,7 @@ export interface Clock {
 export interface HealthStatus {
   status: string;
   data_last_timestamp: string;
+  source_state?: string;
   engines: {
     nowcast: string;
     forecast: string;
@@ -166,6 +167,13 @@ export interface HealthStatus {
   mode: string;
   playing: boolean;
   speed: number;
+  live?: {
+    available: boolean;
+    source: string;
+    day: string | null;
+    fetched_at: string | null;
+    error: string | null;
+  };
 }
 
 export interface ReplayDates {
@@ -308,7 +316,7 @@ export interface PradanScheduleState {
   last_new: string[];
 }
 
-/** GET /api/pradan/status — watcher state + analytics (read-only). */
+/** GET /api/pradan/status ï¿½ watcher state + analytics (read-only). */
 export interface PradanStatus extends PradanAnalytics {
   watching: boolean;
   inbox: string;
@@ -331,7 +339,7 @@ export interface PradanFetched {
   skipped_count: number;
 }
 
-/** POST /api/pradan/poll — one diff pass + optional fetch. */
+/** POST /api/pradan/poll ï¿½ one diff pass + optional fetch. */
 export interface PradanPollResult extends PradanAnalytics {
   inbox: string;
   seen_count: number;
@@ -349,7 +357,7 @@ export interface PradanPollBody {
   url_prefix?: string;
 }
 
-/** POST /api/pradan/discover — live browse table diffed vs manifest. */
+/** POST /api/pradan/discover ï¿½ live browse table diffed vs manifest. */
 export interface PradanDiscoverResult {
   listed: number;
   files: string[];
@@ -358,4 +366,80 @@ export interface PradanDiscoverResult {
   old_count: number;
   on_disk: PradanAnalytics;
   polled_at: string;
+}
+
+/** Live GOES XRS event summary (detection-only, no versioned labels). */
+export interface GoesLiveEvent {
+  id: string;
+  onset: string;
+  peak: string;
+  end: string | null;
+  class: string;
+  peak_flux_sxr: number;
+  detection_method: string;
+  state: string;
+}
+
+/** GET /api/live/goes/status â€” availability without triggering a fetch. */
+export interface GoesLiveStatus {
+  available: boolean;
+  source: string;
+  day: string | null;
+  fetched_at: string | null;
+  latest_source_ts?: string;
+  age_minutes?: number;
+  points?: number;
+  quality_minutes?: number;
+  source_state?: string;
+  provenance?: Record<string, unknown>;
+  labels?: {
+    recipe: string;
+    count: number;
+    manifest?: string;
+    note?: string;
+  };
+  forecast_training?: string;
+  meta?: Record<string, unknown>;
+  events?: GoesLiveEvent[];
+  event_count?: number;
+  error: string | null;
+}
+
+/** GET /api/live/goes â€” live series + nowcast + forecast + impact. */
+export interface GoesLivePayload {
+  source: string;
+  source_state: string;
+  day: string;
+  fetched_at: string;
+  latest_source_ts: string;
+  age_minutes: number;
+  provenance: Record<string, unknown>;
+  series: {
+    solexs: DataPoint[];
+    hel1os: DataPoint[];
+    quality: number[];
+  };
+  nowcast: {
+    state: 'quiet' | 'onset' | 'rising' | 'peak' | 'decay' | string;
+    active: {
+      id: string;
+      onset: string;
+      peak: string;
+      end: string | null;
+      state: string;
+      class: string;
+      peak_flux_sxr: number;
+      peak_flux_hxr: number;
+      detection_method: string;
+      posterior: number;
+    } | null;
+    event_count: number;
+  };
+  forecast: ForecastData;
+  impact: ImpactCurrent;
+  labels: {
+    recipe: string;
+    count: number;
+  };
+  disclaimer: string;
 }
