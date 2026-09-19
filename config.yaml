@@ -52,6 +52,11 @@ pradan:
   # Staging inbox products into the calibrated pipeline (registry/normalized)
   # stays an explicitly calibrated step owned by the ingestion modules.
   schedule_interval_min: 30.0
+goes_live:
+  # Public NOAA XRS feed needs no auth; one small GET per pass. The loop
+  # refreshes the live snapshot + labels, refits the forecast, and pushes
+  # the new status to every open dashboard over /ws/live.
+  refresh_interval_min: 5.0
 rate_limit:
   requests_per_minute: 100
 cors_origins:
