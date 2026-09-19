@@ -11,6 +11,7 @@ import FlareCatalogue from './components/FlareCatalogue';
 import ReplayBar from './components/ReplayBar';
 import MetricsPanel from './components/MetricsPanel';
 import AlertCentre from './components/AlertCentre';
+import PradanLivePanel from './components/PradanLivePanel';
 import About from './components/About';
 import SeverityStrip from './components/SeverityStrip';
 import { useReplayStore } from './store/replayStore';
@@ -171,6 +172,7 @@ export default function App() {
               {chart}
               <ForecastCards forecast={forecast ?? null} />
               <ImpactGauge impact={impact ?? null} />
+              <PradanLivePanel />
             </div>
           );
         }
@@ -192,6 +194,7 @@ export default function App() {
               <ForecastCards forecast={forecast ?? null} />
               <ImpactGauge impact={impact ?? null} />
             </div>
+            <PradanLivePanel />
           </motion.div>
         );
       }
