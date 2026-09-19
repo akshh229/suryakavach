@@ -282,3 +282,80 @@ export interface EvaluationRunDto {
   sample_count: number;
   age_seconds: number;
 }
+
+/** Per-request old-vs-new analytics from the PRADAN diff poller. */
+export interface PradanAnalytics {
+  old_count: number;
+  old_bytes: number;
+  old_mb: number;
+  new_count: number;
+  new_files: string[];
+  new_bytes: number;
+  new_mb: number;
+  total_count: number;
+  total_bytes: number;
+  total_mb: number;
+  missing_count: number;
+}
+
+/** Auto-watch loop state, embedded in PradanStatus. */
+export interface PradanScheduleState {
+  scheduled: boolean;
+  inbox: string;
+  interval_min: number;
+  last_error: string | null;
+  last_pass: string | undefined;
+  last_new: string[];
+}
+
+/** GET /api/pradan/status — watcher state + analytics (read-only). */
+export interface PradanStatus extends PradanAnalytics {
+  watching: boolean;
+  inbox: string;
+  interval: number;
+  seen_count: number;
+  last_new: string[];
+  last_poll: string | null;
+  pending: string[];
+  pending_count: number;
+  polls: number;
+  total_new_all_time: number;
+  schedule: PradanScheduleState;
+}
+
+export interface PradanFetched {
+  downloaded: string[];
+  downloaded_count: number;
+  downloaded_mb: number;
+  skipped: string[];
+  skipped_count: number;
+}
+
+/** POST /api/pradan/poll — one diff pass + optional fetch. */
+export interface PradanPollResult extends PradanAnalytics {
+  inbox: string;
+  seen_count: number;
+  scanned: number;
+  polled_at: string;
+  polls: number;
+  total_new_all_time: number;
+  fetched: PradanFetched;
+}
+
+/** POST /api/pradan/poll body. `{}` = local diff only (5 s safe). */
+export interface PradanPollBody {
+  file_paths?: string[];
+  fetch_defaults?: boolean;
+  url_prefix?: string;
+}
+
+/** POST /api/pradan/discover — live browse table diffed vs manifest. */
+export interface PradanDiscoverResult {
+  listed: number;
+  files: string[];
+  new_count: number;
+  new_files: string[];
+  old_count: number;
+  on_disk: PradanAnalytics;
+  polled_at: string;
+}

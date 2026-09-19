@@ -68,6 +68,25 @@ class ReplayControl(BaseModel):
     cursor: int | None = Field(default=None, ge=0, le=1439)
 
 
+class PradanPoll(BaseModel):
+    # Optional explicit PRADAN file list (the "?all" URLs from the browser
+    # session script). When omitted the pass is a pure local diff — no
+    # network — which is the safe thing to trigger every 5 s.
+    file_paths: list[str] = Field(default_factory=list)
+    # Use the built-in DEFAULT_FILE_PATHS in pradan_live.py instead of
+    # pasting URLs. Still opt-in: False keeps the pass local-only.
+    fetch_defaults: bool = False
+    url_prefix: str = "https://pradan1.issdc.gov.in"
+
+
+class PradanWatch(BaseModel):
+    interval: float = Field(default=5.0, ge=1.0, le=600.0)
+
+
+class PradanSchedule(BaseModel):
+    interval_min: float = Field(default=30.0, ge=1.0, le=1440.0)
+
+
 def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
@@ -482,6 +501,128 @@ def replay_control(body: ReplayControl):
     except ValueError as exc:
         raise BadRequest(str(exc)) from exc
     return runtime.envelope(state)
+
+
+@app.get("/api/pradan/status")
+def pradan_status():
+    """Diff-poller state: what is seen, what is new, is the 5 s watcher on.
+
+    Read-only: never touches downloaded files, never hits the PRADAN network.
+    """
+    from suryakavach.ingest import pradan_live
+
+    state = pradan_live.watcher.state()
+    current = pradan_live.scan_inbox(pradan_live.watcher.inbox)
+    seen = pradan_live.load_manifest(pradan_live.watcher.inbox)
+    pending = pradan_live.diff_manifest(seen, current)
+    analytics = pradan_live.build_analytics(seen, current, pending)
+    stats = pradan_live.load_stats(pradan_live.watcher.inbox)
+    return runtime.envelope(
+        {
+            **state,
+            **analytics,
+            "pending": pending,
+            "pending_count": len(pending),
+            "polls": stats["polls"],
+            "total_new_all_time": stats["total_new"],
+            "schedule": pradan_live.scheduler.state(),
+        }
+    )
+
+
+@app.post("/api/pradan/poll")
+def pradan_poll(body: PradanPoll):
+    """One diff-only pass, safe to trigger every 5 s.
+
+    * No ``file_paths`` → pure local diff (scan inbox vs manifest, report and
+      persist only the *new* rel paths). No network, no mutation of data.
+    * With ``file_paths`` (or ``fetch_defaults``) → first diff the list
+      against on-disk completed files and fetch *only* the unseen ones from
+      PRADAN (skip-if-exists + ``.part`` resume), then run the local diff
+      pass. Requires the fresh browser-session cookie in ``PRADAN_COOKIE``.
+    """
+    from suryakavach.ingest import pradan_live
+
+    fetched: dict = {
+        "downloaded": [],
+        "downloaded_count": 0,
+        "downloaded_mb": 0.0,
+        "skipped": [],
+        "skipped_count": 0,
+    }
+    paths = list(body.file_paths)
+    if not paths and body.fetch_defaults:
+        paths = list(pradan_live.DEFAULT_FILE_PATHS)
+    if paths:
+        try:
+            fetched = pradan_live.download_new_files(
+                paths,
+                url_prefix=body.url_prefix,
+                dest_root=pradan_live.watcher.inbox,
+            )
+        except RuntimeError as exc:
+            raise BadRequest(str(exc)) from exc
+    scan = pradan_live.poll_once(pradan_live.watcher.inbox)
+    return runtime.envelope({**scan, "fetched": fetched})
+
+
+@app.post("/api/pradan/watch/start")
+def pradan_watch_start(body: PradanWatch):
+    """Start the in-process 5 s local-diff watcher (no network). Idempotent."""
+    from suryakavach.ingest import pradan_live
+
+    return runtime.envelope(pradan_live.watcher.start(body.interval))
+
+
+@app.post("/api/pradan/watch/stop")
+def pradan_watch_stop():
+    """Stop the background watcher. Downloaded data and manifest are kept."""
+    from suryakavach.ingest import pradan_live
+
+    return runtime.envelope(pradan_live.watcher.stop())
+
+
+@app.post("/api/pradan/discover")
+def pradan_discover():
+    """Fetch the live PRADAN browse table and diff it against the manifest.
+
+    One authenticated network call (not for the 5 s loop — call on demand).
+    Reports listed files, how many are new vs already seen. Downloads nothing
+    and never modifies the manifest.
+    """
+    from suryakavach.ingest import pradan_live
+
+    try:
+        result = pradan_live.discover_latest(pradan_live.watcher.inbox)
+    except RuntimeError as exc:
+        raise BadRequest(str(exc)) from exc
+    return runtime.envelope(result)
+
+
+@app.post("/api/pradan/schedule/run")
+def pradan_schedule_run():
+    """Execute one auto-watch pass now: discover → download unseen → local
+    diff. Synchronous; may take minutes on a real download. Failures degrade
+    to a local diff, never a 500."""
+    from suryakavach.ingest import pradan_live
+
+    return runtime.envelope(pradan_live.scheduler.run_once())
+
+
+@app.post("/api/pradan/schedule/start")
+def pradan_schedule_start(body: PradanSchedule):
+    """Start the slow auto-watch loop (default every 30 min). Idempotent."""
+    from suryakavach.ingest import pradan_live
+
+    return runtime.envelope(pradan_live.scheduler.start(body.interval_min))
+
+
+@app.post("/api/pradan/schedule/stop")
+def pradan_schedule_stop():
+    """Stop the auto-watch loop. Data and manifest are kept."""
+    from suryakavach.ingest import pradan_live
+
+    return runtime.envelope(pradan_live.scheduler.stop())
 
 
 @app.websocket("/ws/live")
