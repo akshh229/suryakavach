@@ -50,11 +50,13 @@ def train_survival_model(
 
     # Normalization statistics
     flat_seqs = train_batch.sequences.reshape(-1, num_features)
-    mean_vec = flat_seqs.mean(axis=0)
-    std_vec = flat_seqs.std(axis=0)
-    std_vec[std_vec == 0] = 1.0
+    mean_vec = np.nanmean(flat_seqs, axis=0)
+    std_vec = np.nanstd(flat_seqs, axis=0)
+    mean_vec = np.where(np.isfinite(mean_vec), mean_vec, 0.0)
+    std_vec = np.where(np.isfinite(std_vec) & (std_vec > 0), std_vec, 1.0)
 
     def normalize(seqs: np.ndarray) -> np.ndarray:
+        seqs = np.where(np.isfinite(seqs), seqs, mean_vec)
         return (seqs - mean_vec) / std_vec
 
     norm_train_seqs = normalize(train_batch.sequences)
@@ -72,7 +74,7 @@ def train_survival_model(
         torch.tensor(train_batch.m_event, dtype=torch.float32),
         torch.tensor(train_batch.m_time, dtype=torch.long),
     )
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, generator=gen)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, generator=gen, drop_last=True)
 
     val_ds = TensorDataset(
         torch.tensor(norm_val_seqs, dtype=torch.float32),

@@ -16,7 +16,7 @@ def _can_import_torch() -> bool:
         res = subprocess.run(
             [sys.executable, "-c", "import torch"],
             capture_output=True,
-            timeout=5,
+            timeout=20,
         )
         return res.returncode == 0
     except Exception:
@@ -26,7 +26,10 @@ def _can_import_torch() -> bool:
 if not _can_import_torch():
     pytest.skip("PyTorch is not importable without C exception", allow_module_level=True)
 
-import torch
+try:
+    import torch
+except (ImportError, OSError, RuntimeError) as exc:
+    pytest.skip(f"PyTorch failed to load in test runner: {exc}", allow_module_level=True)
 
 
 
@@ -102,6 +105,25 @@ def test_model_training_and_export():
         assert "horizons" in pred_res
         assert len(pred_res["horizons"]) == 4
         assert pred_res["model_provider"] == "deep_discrete_survival"
+
+
+def test_model_training_handles_nan_observations_in_normalization_stats():
+    with TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        cfg = load_config()
+        cfg["data"]["cache_path"] = str(tmp_path)
+
+        days = build_all_days(seed=42)
+        first_key = sorted(days.keys())[0]
+        days[first_key]["solexs"][10:25] = np.nan
+        days[first_key]["hel1os"][10:25] = np.nan
+
+        train_survival_model(days_data=days, cfg=cfg, epochs=2, batch_size=32, output_dir=tmp_path / "models")
+        predictor = PyTorchSurvivalPredictor(tmp_path / "models")
+        assert predictor.is_loaded is True
+        assert np.all(np.isfinite(predictor.mean_vec))
+        assert np.all(np.isfinite(predictor.std_vec))
+        assert np.all(predictor.std_vec > 0)
 
 
 def test_predictor_fallback_on_missing_or_corrupt_checkpoint():

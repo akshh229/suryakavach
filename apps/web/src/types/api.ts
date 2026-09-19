@@ -158,6 +158,7 @@ export interface Clock {
 export interface HealthStatus {
   status: string;
   data_last_timestamp: string;
+  source_state?: string;
   engines: {
     nowcast: string;
     forecast: string;
@@ -166,6 +167,13 @@ export interface HealthStatus {
   mode: string;
   playing: boolean;
   speed: number;
+  live?: {
+    available: boolean;
+    source: string;
+    day: string | null;
+    fetched_at: string | null;
+    error: string | null;
+  };
 }
 
 export interface ReplayDates {
@@ -281,4 +289,157 @@ export interface EvaluationRunDto {
   failure_slices: Record<string, FailureSliceMetricsDto>;
   sample_count: number;
   age_seconds: number;
+}
+
+/** Per-request old-vs-new analytics from the PRADAN diff poller. */
+export interface PradanAnalytics {
+  old_count: number;
+  old_bytes: number;
+  old_mb: number;
+  new_count: number;
+  new_files: string[];
+  new_bytes: number;
+  new_mb: number;
+  total_count: number;
+  total_bytes: number;
+  total_mb: number;
+  missing_count: number;
+}
+
+/** Auto-watch loop state, embedded in PradanStatus. */
+export interface PradanScheduleState {
+  scheduled: boolean;
+  inbox: string;
+  interval_min: number;
+  last_error: string | null;
+  last_pass: string | undefined;
+  last_new: string[];
+}
+
+/** GET /api/pradan/status � watcher state + analytics (read-only). */
+export interface PradanStatus extends PradanAnalytics {
+  watching: boolean;
+  inbox: string;
+  interval: number;
+  seen_count: number;
+  last_new: string[];
+  last_poll: string | null;
+  pending: string[];
+  pending_count: number;
+  polls: number;
+  total_new_all_time: number;
+  schedule: PradanScheduleState;
+}
+
+export interface PradanFetched {
+  downloaded: string[];
+  downloaded_count: number;
+  downloaded_mb: number;
+  skipped: string[];
+  skipped_count: number;
+}
+
+/** POST /api/pradan/poll � one diff pass + optional fetch. */
+export interface PradanPollResult extends PradanAnalytics {
+  inbox: string;
+  seen_count: number;
+  scanned: number;
+  polled_at: string;
+  polls: number;
+  total_new_all_time: number;
+  fetched: PradanFetched;
+}
+
+/** POST /api/pradan/poll body. `{}` = local diff only (5 s safe). */
+export interface PradanPollBody {
+  file_paths?: string[];
+  fetch_defaults?: boolean;
+  url_prefix?: string;
+}
+
+/** POST /api/pradan/discover � live browse table diffed vs manifest. */
+export interface PradanDiscoverResult {
+  listed: number;
+  files: string[];
+  new_count: number;
+  new_files: string[];
+  old_count: number;
+  on_disk: PradanAnalytics;
+  polled_at: string;
+}
+
+/** Live GOES XRS event summary (detection-only, no versioned labels). */
+export interface GoesLiveEvent {
+  id: string;
+  onset: string;
+  peak: string;
+  end: string | null;
+  class: string;
+  peak_flux_sxr: number;
+  detection_method: string;
+  state: string;
+}
+
+/** GET /api/live/goes/status — availability without triggering a fetch. */
+export interface GoesLiveStatus {
+  available: boolean;
+  source: string;
+  day: string | null;
+  fetched_at: string | null;
+  latest_source_ts?: string;
+  age_minutes?: number;
+  points?: number;
+  quality_minutes?: number;
+  source_state?: string;
+  provenance?: Record<string, unknown>;
+  labels?: {
+    recipe: string;
+    count: number;
+    manifest?: string;
+    note?: string;
+  };
+  forecast_training?: string;
+  meta?: Record<string, unknown>;
+  events?: GoesLiveEvent[];
+  event_count?: number;
+  error: string | null;
+}
+
+/** GET /api/live/goes — live series + nowcast + forecast + impact. */
+export interface GoesLivePayload {
+  source: string;
+  source_state: string;
+  day: string;
+  fetched_at: string;
+  latest_source_ts: string;
+  age_minutes: number;
+  provenance: Record<string, unknown>;
+  series: {
+    solexs: DataPoint[];
+    hel1os: DataPoint[];
+    quality: number[];
+  };
+  nowcast: {
+    state: 'quiet' | 'onset' | 'rising' | 'peak' | 'decay' | string;
+    active: {
+      id: string;
+      onset: string;
+      peak: string;
+      end: string | null;
+      state: string;
+      class: string;
+      peak_flux_sxr: number;
+      peak_flux_hxr: number;
+      detection_method: string;
+      posterior: number;
+    } | null;
+    event_count: number;
+  };
+  forecast: ForecastData;
+  impact: ImpactCurrent;
+  labels: {
+    recipe: string;
+    count: number;
+  };
+  disclaimer: string;
 }

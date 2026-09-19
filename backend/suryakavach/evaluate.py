@@ -130,12 +130,13 @@ def run_evaluation(
     cfg: dict[str, Any] | None = None,
     save_db: bool = True,
     db_path: Path | None = None,
+    days: dict[str, Any] | None = None,
 ) -> EvaluationRun:
     """Executes full backtesting evaluation, computes metrics, CIs, calibration,
     persists result to database, and writes output files.
     """
     cfg = cfg or load_config()
-    days = build_all_days(int(cfg["data"]["seed"]))
+    days = days if days is not None else build_all_days(int(cfg["data"]["seed"]))
 
     config_hash = compute_config_hash(cfg)
     dataset_hash = compute_dataset_hash(days)

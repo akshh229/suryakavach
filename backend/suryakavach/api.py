@@ -68,6 +68,25 @@ class ReplayControl(BaseModel):
     cursor: int | None = Field(default=None, ge=0, le=1439)
 
 
+class PradanPoll(BaseModel):
+    # Optional explicit PRADAN file list (the "?all" URLs from the browser
+    # session script). When omitted the pass is a pure local diff — no
+    # network — which is the safe thing to trigger every 5 s.
+    file_paths: list[str] = Field(default_factory=list)
+    # Use the built-in DEFAULT_FILE_PATHS in pradan_live.py instead of
+    # pasting URLs. Still opt-in: False keeps the pass local-only.
+    fetch_defaults: bool = False
+    url_prefix: str = "https://pradan1.issdc.gov.in"
+
+
+class PradanWatch(BaseModel):
+    interval: float = Field(default=5.0, ge=1.0, le=600.0)
+
+
+class PradanSchedule(BaseModel):
+    interval_min: float = Field(default=30.0, ge=1.0, le=1440.0)
+
+
 def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
@@ -125,12 +144,48 @@ async def lifespan(app: FastAPI):
     # /api/health immediately instead of the platform's health check timing out.
     await asyncio.to_thread(runtime.boot)
     task = asyncio.create_task(_sim_loop())
+    live_task = asyncio.create_task(_goes_live_loop())
     try:
         yield
     finally:
         task.cancel()
+        live_task.cancel()
         with suppress(asyncio.CancelledError):
             await task
+        with suppress(asyncio.CancelledError):
+            await live_task
+
+
+def _goes_refresh_minutes() -> float:
+    try:
+        return max(1.0, float((cfg.get("goes_live") or {}).get("refresh_interval_min", 5.0)))
+    except (TypeError, ValueError):
+        return 5.0
+
+
+async def _goes_live_loop():
+    """Background auto-refresh: new NOAA data -> snapshot -> push to dashboards.
+
+    One polite GET per interval; any failure is logged and the loop continues
+    so a transient outage never kills auto-update for the process lifetime.
+    """
+    await asyncio.sleep(10.0)  # let boot + first clients settle
+    while True:
+        await asyncio.sleep(_goes_refresh_minutes() * 60.0)
+        try:
+            status = await asyncio.to_thread(runtime.refresh_live)
+            await _broadcast(
+                {
+                    "live": status,
+                    "clock": {
+                        "utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    },
+                }
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("goes live auto-refresh failed; continuing")
 
 
 app = FastAPI(
@@ -361,8 +416,7 @@ def get_metrics(
             run_data = get_latest_evaluation_run(conn, source_cohort=cohort)
     except Exception:
         # A remote evaluation store may be unavailable or not migrated yet.
-        # The metrics endpoint can still serve the deterministic local
-        # evaluation, which keeps the dashboard usable during that rollout.
+        # The endpoint can still serve deterministic local metrics.
         run_data = None
 
     if not run_data:
@@ -386,16 +440,7 @@ def get_metrics(
         if run_id:
             raise NotFound(f"Evaluation run '{run_id}' not found")
         elif cohort:
-            try:
-                from suryakavach.evaluate import run_evaluation
-                eval_run = run_evaluation(source_cohort=cohort, save_db=True)
-                run_dict = eval_run.to_dict()
-                if run_dict.get("source_cohort") == cohort:
-                    run_data = run_dict
-                else:
-                    raise NotFound(f"Evaluation run for cohort '{cohort}' not found")
-            except Exception:
-                raise NotFound(f"Evaluation run for cohort '{cohort}' not found")
+            raise NotFound(f"Evaluation run for cohort '{cohort}' not found")
         else:
             from suryakavach.evaluate import run_evaluation
             eval_run = run_evaluation(
@@ -504,6 +549,172 @@ def replay_control(body: ReplayControl):
     except ValueError as exc:
         raise BadRequest(str(exc)) from exc
     return runtime.envelope(state)
+
+
+@app.get("/api/pradan/status")
+def pradan_status():
+    """Diff-poller state: what is seen, what is new, is the 5 s watcher on.
+
+    Read-only: never touches downloaded files, never hits the PRADAN network.
+    """
+    from suryakavach.ingest import pradan_live
+
+    state = pradan_live.watcher.state()
+    current = pradan_live.scan_inbox(pradan_live.watcher.inbox)
+    seen = pradan_live.load_manifest(pradan_live.watcher.inbox)
+    pending = pradan_live.diff_manifest(seen, current)
+    analytics = pradan_live.build_analytics(seen, current, pending)
+    stats = pradan_live.load_stats(pradan_live.watcher.inbox)
+    return runtime.envelope(
+        {
+            **state,
+            **analytics,
+            "pending": pending,
+            "pending_count": len(pending),
+            "polls": stats["polls"],
+            "total_new_all_time": stats["total_new"],
+            "schedule": pradan_live.scheduler.state(),
+        }
+    )
+
+
+@app.post("/api/pradan/poll")
+def pradan_poll(body: PradanPoll):
+    """One diff-only pass, safe to trigger every 5 s.
+
+    * No ``file_paths`` → pure local diff (scan inbox vs manifest, report and
+      persist only the *new* rel paths). No network, no mutation of data.
+    * With ``file_paths`` (or ``fetch_defaults``) → first diff the list
+      against on-disk completed files and fetch *only* the unseen ones from
+      PRADAN (skip-if-exists + ``.part`` resume), then run the local diff
+      pass. Requires the fresh browser-session cookie in ``PRADAN_COOKIE``.
+    """
+    from suryakavach.ingest import pradan_live
+
+    fetched: dict = {
+        "downloaded": [],
+        "downloaded_count": 0,
+        "downloaded_mb": 0.0,
+        "skipped": [],
+        "skipped_count": 0,
+    }
+    paths = list(body.file_paths)
+    if not paths and body.fetch_defaults:
+        paths = list(pradan_live.DEFAULT_FILE_PATHS)
+    if paths:
+        try:
+            fetched = pradan_live.download_new_files(
+                paths,
+                url_prefix=body.url_prefix,
+                dest_root=pradan_live.watcher.inbox,
+            )
+        except RuntimeError as exc:
+            raise BadRequest(str(exc)) from exc
+    scan = pradan_live.poll_once(pradan_live.watcher.inbox)
+    return runtime.envelope({**scan, "fetched": fetched})
+
+
+@app.post("/api/pradan/watch/start")
+def pradan_watch_start(body: PradanWatch):
+    """Start the in-process 5 s local-diff watcher (no network). Idempotent."""
+    from suryakavach.ingest import pradan_live
+
+    return runtime.envelope(pradan_live.watcher.start(body.interval))
+
+
+@app.post("/api/pradan/watch/stop")
+def pradan_watch_stop():
+    """Stop the background watcher. Downloaded data and manifest are kept."""
+    from suryakavach.ingest import pradan_live
+
+    return runtime.envelope(pradan_live.watcher.stop())
+
+
+@app.post("/api/pradan/discover")
+def pradan_discover():
+    """Fetch the live PRADAN browse table and diff it against the manifest.
+
+    One authenticated network call (not for the 5 s loop — call on demand).
+    Reports listed files, how many are new vs already seen. Downloads nothing
+    and never modifies the manifest.
+    """
+    from suryakavach.ingest import pradan_live
+
+    try:
+        result = pradan_live.discover_latest(pradan_live.watcher.inbox)
+    except RuntimeError as exc:
+        raise BadRequest(str(exc)) from exc
+    return runtime.envelope(result)
+
+
+@app.post("/api/pradan/schedule/run")
+def pradan_schedule_run():
+    """Execute one auto-watch pass now: discover → download unseen → local
+    diff. Synchronous; may take minutes on a real download. Failures degrade
+    to a local diff, never a 500."""
+    from suryakavach.ingest import pradan_live
+
+    return runtime.envelope(pradan_live.scheduler.run_once())
+
+
+@app.post("/api/pradan/schedule/start")
+def pradan_schedule_start(body: PradanSchedule):
+    """Start the slow auto-watch loop (default every 30 min). Idempotent."""
+    from suryakavach.ingest import pradan_live
+
+    return runtime.envelope(pradan_live.scheduler.start(body.interval_min))
+
+
+@app.post("/api/pradan/schedule/stop")
+def pradan_schedule_stop():
+    """Stop the auto-watch loop. Data and manifest are kept."""
+    from suryakavach.ingest import pradan_live
+
+    return runtime.envelope(pradan_live.scheduler.stop())
+
+
+@app.get("/api/live/goes")
+async def goes_live(window: int = Query(180, ge=10, le=1440)):
+    """Live GOES XRS snapshot: streams + nowcast + forecast + impact.
+
+    Stale-while-revalidate: serves the cached snapshot immediately; refreshes
+    in the background when older than 5 minutes. First call ever triggers a
+    synchronous refresh (may take seconds on the NOAA fetch).
+    """
+    require_ready()
+    status = runtime.live_status()
+    from suryakavach.ingest.goes_live import is_stale
+
+    if not status.get("available") or is_stale(status.get("fetched_at"), _goes_refresh_minutes()):
+        try:
+            await asyncio.to_thread(runtime.refresh_live)
+        except Exception as exc:
+            if not status.get("available"):
+                raise BadRequest(f"live refresh failed: {exc}") from exc
+    try:
+        payload = runtime.live_payload(window)
+    except RuntimeError as exc:
+        raise BadRequest(str(exc)) from exc
+    return runtime.envelope(payload, {"source": "noaa.goes.xrs", "live": True})
+
+
+@app.post("/api/live/goes/refresh")
+async def goes_live_refresh():
+    """Force a fresh GOES XRS fetch + nowcast, and push it to dashboards."""
+    require_ready()
+    try:
+        status = await asyncio.to_thread(runtime.refresh_live)
+    except Exception as exc:
+        raise BadRequest(f"live refresh failed: {exc}") from exc
+    await _broadcast({"live": status})
+    return runtime.envelope(status, {"source": "noaa.goes.xrs", "live": True})
+
+
+@app.get("/api/live/goes/status")
+def goes_live_status():
+    """Live-source availability without triggering a fetch."""
+    require_ready()
+    return runtime.envelope(runtime.live_status(), {"source": "noaa.goes.xrs"})
 
 
 @app.websocket("/ws/live")

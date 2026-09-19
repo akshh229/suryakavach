@@ -41,6 +41,22 @@ impact_scale:
   version: "2026-09-19-v1"
 baseline:
   sxr_onset: 5.0e-7
+pradan:
+  # Local intake inbox; the 5 s watcher diffs this dir only (no network).
+  # Authenticated fetches read the fresh browser-session cookie from the
+  # gitignored backend/.env (PRADAN_COOKIE) — never from source.
+  inbox_subdir: pradan_inbox
+  poll_interval: 5.0
+  # Auto-watch (discover → download → diff) cadence, minutes. Deliberately
+  # slow: each pass is one browse GET plus fetches for unseen files only.
+  # Staging inbox products into the calibrated pipeline (registry/normalized)
+  # stays an explicitly calibrated step owned by the ingestion modules.
+  schedule_interval_min: 30.0
+goes_live:
+  # Public NOAA XRS feed needs no auth; one small GET per pass. The loop
+  # refreshes the live snapshot + labels, refits the forecast, and pushes
+  # the new status to every open dashboard over /ws/live.
+  refresh_interval_min: 5.0
 rate_limit:
   requests_per_minute: 100
 cors_origins:

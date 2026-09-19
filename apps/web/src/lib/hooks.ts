@@ -16,6 +16,13 @@ import type {
   ReplayStartResult,
   Alert,
   EvaluationRunDto,
+  PradanStatus,
+  PradanPollResult,
+  PradanPollBody,
+  PradanDiscoverResult,
+  PradanScheduleState,
+  GoesLivePayload,
+  GoesLiveStatus,
 } from '../types/api';
 
 export function useStreams(windowSize: number) {
@@ -162,6 +169,116 @@ export function useStartReplay() {
       sync(state);
       queryClient.invalidateQueries({ queryKey: ['catalogue'] });
       return result;
+    },
+  });
+}
+
+/**
+ * PRADAN live-intake hooks (additive; nothing here deletes or replaces
+ * server state — every response is an old-vs-new diff to append from).
+ *
+ * Staging inbox products into the calibrated pipeline (registry/normalized)
+ * stays an explicitly calibrated step owned by the ingestion modules; these
+ * hooks only poll, discover, and fetch raw products.
+ */
+
+/** Read-only analytics, safe on a 5 s refetch (no network to PRADAN). */
+export function usePradanStatus(enabled: boolean = true) {
+  return useQuery({
+    queryKey: ['pradanStatus'],
+    queryFn: () => api.get<PradanStatus>('/api/pradan/status'),
+    enabled,
+    staleTime: 5_000,
+    refetchInterval: enabled ? 5_000 : false,
+  });
+}
+
+/**
+ * One diff pass. `{}` = local diff only (5 s safe); `{ fetch_defaults: true }`
+ * downloads only unseen files from the built-in list. On success the status
+ * cache is refreshed so badges/counts update immediately.
+ */
+export function usePradanPoll() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: PradanPollBody = {}) =>
+      api.post<PradanPollResult>('/api/pradan/poll', body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pradanStatus'] });
+    },
+  });
+}
+
+/** Live browse-table listing diffed vs the manifest (one network call). */
+export function usePradanDiscover() {
+  return useMutation({
+    mutationFn: () => api.post<PradanDiscoverResult>('/api/pradan/discover'),
+  });
+}
+
+/**
+ * Slow auto-watch loop (discover → download → diff, default 30 min).
+ * Failures degrade to a local diff server-side and surface as `last_error`.
+ */
+export function usePradanSchedule() {
+  const queryClient = useQueryClient();
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ['pradanStatus'] });
+  };
+  return {
+    runOnce: useMutation({
+      mutationFn: () => api.post<Record<string, unknown>>('/api/pradan/schedule/run'),
+      onSuccess: refresh,
+    }),
+    start: useMutation({
+      mutationFn: (interval_min: number = 30) =>
+        api.post<PradanScheduleState>('/api/pradan/schedule/start', { interval_min }),
+      onSuccess: refresh,
+    }),
+    stop: useMutation({
+      mutationFn: () => api.post<PradanScheduleState>('/api/pradan/schedule/stop'),
+      onSuccess: refresh,
+    }),
+  };
+}
+
+/**
+ * GOES XRS live source (additive; replay hooks above are untouched).
+ * Server does stale-while-revalidate (refreshes when older than 5 min),
+ * so a 60 s refetch here stays cheap and never hammers NOAA.
+ */
+
+/** Availability probe — never triggers a fetch. */
+export function useGoesLiveStatus(enabled: boolean = true) {
+  return useQuery({
+    queryKey: ['goesLiveStatus'],
+    queryFn: () => api.get<GoesLiveStatus>('/api/live/goes/status'),
+    enabled,
+    staleTime: 60_000,
+    refetchInterval: enabled ? 60_000 : false,
+  });
+}
+
+/** Live series + nowcast + forecast + impact in one payload. */
+export function useGoesLive(windowSize: number, enabled: boolean = true) {
+  return useQuery({
+    queryKey: ['goesLive', windowSize],
+    queryFn: () => api.get<GoesLivePayload>(`/api/live/goes?window=${windowSize}`),
+    enabled,
+    staleTime: 60_000,
+    refetchInterval: enabled ? 60_000 : false,
+  });
+}
+
+/** Force a fresh NOAA fetch + nowcast (blocking, may take seconds). */
+export function useGoesRefresh() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<GoesLiveStatus>('/api/live/goes/refresh'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['goesLive'] });
+      queryClient.invalidateQueries({ queryKey: ['goesLiveStatus'] });
+      queryClient.invalidateQueries({ queryKey: ['health'] });
     },
   });
 }

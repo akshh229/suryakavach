@@ -11,13 +11,15 @@ import FlareCatalogue from './components/FlareCatalogue';
 import ReplayBar from './components/ReplayBar';
 import MetricsPanel from './components/MetricsPanel';
 import AlertCentre from './components/AlertCentre';
+import PradanLivePanel from './components/PradanLivePanel';
 import About from './components/About';
 import SeverityStrip from './components/SeverityStrip';
 import { useReplayStore } from './store/replayStore';
-import { useStreams, useNowcast, useForecast, useImpact, useHealth, useReplayDates } from './lib/hooks';
+import { useQueryClient } from '@tanstack/react-query';
+import { useStreams, useNowcast, useForecast, useImpact, useHealth, useReplayDates, useGoesLive, useGoesLiveStatus, useGoesRefresh } from './lib/hooks';
 import { WS_URL } from './lib/constants';
 import { useRouter, isModifiedClick } from './lib/router';
-import type { Clock } from './types/api';
+import type { Clock, StreamsLatest, NowcastState, ForecastData, ImpactCurrent } from './types/api';
 import { screenFade, usePrefersReducedMotion } from './lib/motion';
 import { useIsMobile } from './lib/responsive';
 
@@ -71,21 +73,127 @@ export default function App() {
   const reduced = usePrefersReducedMotion();
   const isMobile = useIsMobile();
   const { setPlaying, setSpeed, setCursor, setEventDate, setDates, setMode } = useReplayStore();
+  const queryClient = useQueryClient();
 
   const [windowSize, setWindowSize] = useState(120);
   const [wsConnected, setWsConnected] = useState(false);
   const [clock, setClock] = useState<Clock | null>(null);
+  // Replay cache vs live GOES XRS. Live is the default so the site shows
+  // real data; every panel falls back to the replay cache while the live
+  // snapshot is still loading (or if the feed is unreachable).
+  const [dataSource, setDataSource] = useState<'replay' | 'live'>('live');
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<number>(1000);
 
-  // TanStack Query hooks for server state
+  // TanStack Query hooks for server state (replay cache)
   const { data: streams } = useStreams(windowSize);
   const { data: nowcastState } = useNowcast();
   const { data: forecast } = useForecast();
   const { data: impact } = useImpact();
   const { data: health } = useHealth();
   const { data: replayDates } = useReplayDates();
+
+  // GOES XRS live source (independent snapshot: series + nowcast + forecast + impact)
+  const liveEnabled = dataSource === 'live';
+  const { data: goesLive, isFetching: goesFetching } = useGoesLive(windowSize, liveEnabled);
+  const { data: goesStatus } = useGoesLiveStatus(true);
+  const goesRefresh = useGoesRefresh();
+
+  // Map the live payload onto the shapes the panels already render, so
+  // ForecastCards / ImpactGauge / TelemetryChart / NowcastBanner work live
+  // with no component changes. Falls back to replay cache until the live
+  // snapshot arrives.
+  const displayStreams: StreamsLatest | undefined =
+    liveEnabled && goesLive
+      ? {
+          solexs: goesLive.series.solexs,
+          hel1os: goesLive.series.hel1os,
+          quality: goesLive.series.quality,
+          flare_intervals: [],
+          changepoints: [],
+          gaps: [],
+        }
+      : streams;
+  const displayForecast: ForecastData | undefined =
+    liveEnabled && goesLive ? goesLive.forecast : forecast;
+  const displayImpact: ImpactCurrent | undefined =
+    liveEnabled && goesLive ? goesLive.impact : impact;
+  const displayNowcast: NowcastState | undefined =
+    liveEnabled && goesLive
+      ? {
+          state: (goesLive.nowcast.state as NowcastState['state']) ?? 'quiet',
+          active: goesLive.nowcast.active
+            ? {
+                id: goesLive.nowcast.active.id,
+                onset: goesLive.nowcast.active.onset,
+                peak: goesLive.nowcast.active.peak,
+                end: goesLive.nowcast.active.end,
+                state: 'decay' as const,
+                class: goesLive.nowcast.active.class,
+                peak_flux_sxr: goesLive.nowcast.active.peak_flux_sxr,
+                peak_flux_hxr: goesLive.nowcast.active.peak_flux_hxr,
+                hardness: 0,
+                impulsivity: 0,
+                integrated_flux: 0,
+                index: goesLive.impact.index ?? 0,
+                severity_band: goesLive.impact.band,
+                r_level: goesLive.impact.r_level,
+                detection_method: goesLive.nowcast.active.detection_method,
+                posterior: goesLive.nowcast.active.posterior,
+              }
+            : null,
+          threshold_baseline_active: false,
+        }
+      : nowcastState;
+
+  const sourceToggle = (
+    <div className="flex flex-wrap items-center gap-2 px-1" role="group" aria-label="Data source">
+      <div className="inline-flex rounded-full border border-rule p-0.5 text-[11px] font-mono-val uppercase tracking-[0.15em]">
+        {(['replay', 'live'] as const).map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => setDataSource(s)}
+            aria-pressed={dataSource === s}
+            className={`sk-touch rounded-full px-3 py-1.5 transition-colors ${
+              dataSource === s ? 'bg-accent text-white' : 'text-ink-faint hover:text-accent-soft'
+            }`}
+          >
+            {s === 'replay' ? 'Replay cache' : 'Live GOES'}
+          </button>
+        ))}
+      </div>
+      {dataSource === 'live' && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono-val text-ink-faint">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+            observed_calibrated · NOAA GOES XRS (not Aditya-L1) · auto-updates ~5 min
+          </span>
+          {goesLive && (
+            <span>
+              {goesLive.nowcast.event_count} events · {goesLive.labels.count} labels ·{' '}
+              {goesLive.age_minutes.toFixed(0)} min old
+            </span>
+          )}
+          {!goesLive && goesStatus && (
+            <span>{goesStatus.available ? `snapshot ${goesStatus.day ?? ''}` : 'no snapshot yet'}</span>
+          )}
+          <button
+            type="button"
+            onClick={() => goesRefresh.mutate()}
+            disabled={goesRefresh.isPending || goesFetching}
+            className="sk-touch underline underline-offset-2 hover:text-accent-soft disabled:opacity-50"
+          >
+            {goesRefresh.isPending ? 'Refreshing…' : 'Refresh live'}
+          </button>
+        </div>
+      )}
+      {dataSource === 'live' && goesLive?.disclaimer && (
+        <p className="px-1 text-[11px] font-mono-val text-ink-faint">{goesLive.disclaimer}</p>
+      )}
+    </div>
+  );
 
   // Wire replay dates into the store
   useEffect(() => {
@@ -106,13 +214,19 @@ export default function App() {
       try {
         const payload = JSON.parse(event.data);
         if (payload.heartbeat) return;
-        if (payload.clock) setClock(payload.clock);
+        if (payload.clock) setClock(payload.clock as Clock);
         if (payload.cursor_idx !== undefined) setCursor(payload.cursor_idx);
         if (payload.playing !== undefined) setPlaying(payload.playing);
         if (payload.speed !== undefined) setSpeed(payload.speed);
         if (payload.event_date) setEventDate(payload.event_date);
         if (payload.dates) setDates(payload.dates);
         if (payload.mode) setMode(payload.mode);
+        // Server auto-refresh pushed a fresh GOES snapshot: re-render live
+        // panels immediately instead of waiting for the next poll.
+        if (payload.live) {
+          queryClient.invalidateQueries({ queryKey: ['goesLive'] });
+          queryClient.invalidateQueries({ queryKey: ['goesLiveStatus'] });
+        }
       } catch {
         // ignore parse errors
       }
@@ -127,7 +241,7 @@ export default function App() {
     ws.onerror = () => {
       ws.close();
     };
-  }, [setPlaying, setSpeed, setCursor, setEventDate, setDates, setMode]);
+  }, [setPlaying, setSpeed, setCursor, setEventDate, setDates, setMode, queryClient]);
 
   useEffect(() => {
     connectWS();
@@ -149,10 +263,10 @@ export default function App() {
             ]}
           />
         );
-        const banner = <NowcastBanner nowcastState={nowcastState ?? null} />;
+        const banner = <NowcastBanner nowcastState={displayNowcast ?? null} />;
         const chart = (
           <TelemetryChart
-            streams={streams ?? null}
+            streams={displayStreams ?? null}
             windowSize={windowSize}
             onWindowChange={handleWindowChange}
           />
@@ -165,12 +279,14 @@ export default function App() {
           return (
             <div className="space-y-4">
               {heading}
+              {sourceToggle}
               {banner}
-              <SeverityStrip impact={impact ?? null} />
+              <SeverityStrip impact={displayImpact ?? null} />
               <AlertCentre limit={1} compact />
               {chart}
-              <ForecastCards forecast={forecast ?? null} />
-              <ImpactGauge impact={impact ?? null} />
+              <ForecastCards forecast={displayForecast ?? null} />
+              <ImpactGauge impact={displayImpact ?? null} />
+              <PradanLivePanel />
             </div>
           );
         }
@@ -185,13 +301,15 @@ export default function App() {
           >
             <motion.div variants={reduced ? undefined : { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }}>
               {heading}
+              {sourceToggle}
             </motion.div>
             {banner}
             {chart}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-              <ForecastCards forecast={forecast ?? null} />
-              <ImpactGauge impact={impact ?? null} />
+              <ForecastCards forecast={displayForecast ?? null} />
+              <ImpactGauge impact={displayImpact ?? null} />
             </div>
+            <PradanLivePanel />
           </motion.div>
         );
       }
@@ -206,8 +324,9 @@ export default function App() {
                 { label: 'Impact', href: '/impact' },
               ]}
             />
-            <ForecastCards forecast={forecast ?? null} />
-            <TelemetryChart streams={streams ?? null} windowSize={windowSize} onWindowChange={handleWindowChange} />
+            {sourceToggle}
+            <ForecastCards forecast={displayForecast ?? null} />
+            <TelemetryChart streams={displayStreams ?? null} windowSize={windowSize} onWindowChange={handleWindowChange} />
             <MetricsPanel />
           </motion.div>
         );
@@ -222,9 +341,10 @@ export default function App() {
                 { label: 'Live Console', href: '/live' },
               ]}
             />
-            <ImpactGauge impact={impact ?? null} />
+            {sourceToggle}
+            <ImpactGauge impact={displayImpact ?? null} />
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-              <NowcastBanner nowcastState={nowcastState ?? null} />
+              <NowcastBanner nowcastState={displayNowcast ?? null} />
               <AlertCentre />
             </div>
           </motion.div>
