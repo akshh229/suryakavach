@@ -82,7 +82,7 @@ export function useCoarsePointer(): boolean {
  * Self-reported low-end signals. Deliberately narrow: 2GB, a dual-core CPU or
  * Save-Data. A typical laptop reporting 4 cores must still get the Scene.
  */
-function isLowEndDevice(): boolean {
+export function isLowEndDevice(): boolean {
   if (typeof navigator === 'undefined') return false;
   const nav = navigator as Navigator & {
     deviceMemory?: number;
@@ -97,36 +97,3 @@ function isLowEndDevice(): boolean {
   );
 }
 
-/**
- * The heavy-visual gate as a plain function, for callers that run outside
- * React's render cycle — the entry starts the 3D scene download before the
- * component tree exists (see preloadSolarScene in LandingHero). Same rules as
- * the hook below; the hook adds the subscription that lets a device downgrade
- * itself after mount.
- */
-export function heavyVisualsAllowedNow(): boolean {
-  if (typeof window === 'undefined') return false;
-  return !match(MOBILE_QUERY) && !match(REDUCED_MOTION_QUERY) && !isLowEndDevice();
-}
-
-/**
- * Whether the heavy WebGL hero may boot.
- *
- * Gates, all conservative:
- *   1. not a phone-width viewport,
- *   2. no `prefers-reduced-motion`,
- *   3. enough memory/cores and no Save-Data.
- *
- * `capable` starts optimistic so a normal desktop mounts the scene on the
- * first paint (no CSS→WebGL swap). The effect can only *downgrade* a device
- * that self-reports as low-end, and phones are already excluded by the
- * viewport query at first render — so the expensive path is never taken on a
- * small screen, which is the case that actually matters.
- */
-export function useHeavyVisualsAllowed(): boolean {
-  const isMobile = useIsMobile();
-  const reduced = useMediaQuery(REDUCED_MOTION_QUERY);
-  const [lowEnd] = useState(isLowEndDevice);
-
-  return !isMobile && !reduced && !lowEnd;
-}

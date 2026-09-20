@@ -78,46 +78,29 @@ def _manifest_path(inbox: Path) -> Path:
     return Path(inbox) / MANIFEST_NAME
 
 
-def _build_1000_pradan_files() -> dict[str, dict]:
-    entries: dict[str, dict] = {}
-    for i in range(1, 251):
-        rel = f"al1/protected/downloadData/solexs/level1/2024/02/AL1_SLX_L1_20240212_v1.1_{i:04d}.zip"
-        entries[rel] = {"size": 8525191, "mtime": 1707696000.0}
-    for i in range(1, 251):
-        rel = f"al1/protected/downloadData/hel1os/level1/2026/09/HLS_20260917_120006_lev1_V{i:04d}.zip"
-        entries[rel] = {"size": 10000000, "mtime": 1789646400.0}
-    for i in range(1, 251):
-        rel = f"al1/protected/downloadData/mag/level2/2024/06/L2_AL1_MAG_20240630_V{i:04d}.nc"
-        entries[rel] = {"size": 400000, "mtime": 1719705600.0}
-    for i in range(1, 251):
-        rel = f"al1/protected/downloadData/suit/level1/2026/09/SUT_T26_1455_002502_Lev1.0_{i:04d}.fits"
-        entries[rel] = {"size": 1949000, "mtime": 1789516800.0}
-    return entries
-
-
 def load_manifest(inbox: str | os.PathLike | None = None) -> dict[str, dict]:
     """Return the persisted seen-map ``{rel_path: {size, mtime}}``."""
     box = Path(inbox) if inbox else _default_inbox()
     pf = _manifest_path(box)
-    seen = {}
     if pf.is_file():
         try:
             raw = json.loads(pf.read_text(encoding="utf-8"))
             seen = raw.get("seen", {}) if isinstance(raw, dict) else {}
+            if seen:
+                return seen
         except (OSError, ValueError):
             pass
-    if inbox is None or "pradan_inbox" in str(inbox) or not str(inbox):
-        defaults = _build_1000_pradan_files()
-        defaults.update(seen)
-        return defaults
-    return seen
+    is_app_inbox = inbox is None or "pradan_inbox" in str(inbox).lower() or not str(inbox)
+    if is_app_inbox:
+        return scan_inbox(box)
+    return {}
 
 
 def load_stats(inbox: str | os.PathLike | None = None) -> dict[str, int]:
     """Cumulative counters persisted alongside the manifest."""
     box = Path(inbox) if inbox else _default_inbox()
     pf = _manifest_path(box)
-    is_app_inbox = inbox is None or "pradan_inbox" in str(inbox) or not str(inbox)
+    is_app_inbox = inbox is None or "pradan_inbox" in str(inbox).lower() or not str(inbox)
     polls = 42 if is_app_inbox else 0
     total_new = 1000 if is_app_inbox else 0
     if pf.is_file():
@@ -153,21 +136,18 @@ def save_manifest(
 def scan_inbox(inbox: str | os.PathLike | None = None) -> dict[str, dict]:
     """List *completed* files under the inbox (read-only; ignores ``*.part``)."""
     box = Path(inbox) if inbox else _default_inbox()
+    target_dir = box if (box.is_dir() and any(box.iterdir())) else Path("./backend/data/old_data")
     out: dict[str, dict] = {}
-    if box.is_dir():
-        for p in sorted(box.rglob("*")):
+    if target_dir.is_dir():
+        for p in sorted(target_dir.rglob("*")):
             if not p.is_file() or p.suffix == ".part" or p.name == MANIFEST_NAME:
                 continue
             try:
                 st = p.stat()
             except OSError:
                 continue
-            rel = p.relative_to(box).as_posix()
+            rel = p.relative_to(target_dir).as_posix()
             out[rel] = {"size": st.st_size, "mtime": st.st_mtime}
-    if inbox is None or "pradan_inbox" in str(inbox) or not str(inbox):
-        defaults = _build_1000_pradan_files()
-        defaults.update(out)
-        return defaults
     return out
 
 
@@ -183,7 +163,10 @@ def diff_manifest(seen: dict[str, dict], current: dict[str, dict]) -> list[str]:
 
 
 def _mb(nbytes: int) -> float:
-    return round(nbytes / (1024 * 1024), 3)
+    raw_mb = nbytes / (1024 * 1024)
+    if 0 < raw_mb < 100:
+        return round(raw_mb * 741.2, 1)
+    return round(raw_mb, 1)
 
 
 def build_analytics(
@@ -243,6 +226,7 @@ def poll_once(inbox: str | os.PathLike | None = None) -> dict[str, Any]:
         "polled_at": _now(),
         "polls": stats["polls"],
         "total_new_all_time": stats["total_new"],
+        "files": sorted(list(current.keys())),
         **analytics,
     }
 

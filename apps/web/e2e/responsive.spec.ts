@@ -135,30 +135,30 @@ test.describe('layout per breakpoint', () => {
   });
 });
 
-test.describe('heavy visuals are earned, not assumed', () => {
+test.describe('landing visual is video-only', () => {
   for (const width of [320, 375, 390]) {
-    test(`no WebGL hero at ${width}px`, async ({ page }) => {
+    test(`uses the video hero at ${width}px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 640 });
       await page.goto('/');
       await expect(page.getByRole('heading', { level: 1, name: 'SURYAKAVACH' })).toBeVisible();
       await expect(page.locator('canvas')).toHaveCount(0);
-      // The static backdrop is what the visitor actually gets.
-      await expect(page.locator('.sk-space-bg')).toBeVisible();
+      await expect(page.getByTestId('hero-video')).toBeVisible();
     });
   }
 
-  test('the WebGL hero still runs on a desktop viewport', async ({ page }) => {
+  test('desktop also uses the video hero without a canvas', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto('/');
-    await expect(page.locator('canvas').first()).toBeAttached();
+    await expect(page.getByTestId('hero-video')).toBeVisible();
+    await expect(page.locator('canvas')).toHaveCount(0);
   });
 
-  test('three.js is never fetched on a phone', async ({ page }) => {
+  test('the retired WebGL scene is never fetched', async ({ page }) => {
     const heavy: string[] = [];
     page.on('request', (r) => {
       if (/three|SolarScene/i.test(r.url())) heavy.push(r.url());
     });
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto('/');
     await page.waitForTimeout(1200);
     expect(heavy).toEqual([]);

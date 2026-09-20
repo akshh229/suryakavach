@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import NavBar from './components/NavBar';
 import Header from './components/Header';
 import LandingHero from './components/LandingHero';
@@ -426,17 +426,17 @@ export default function App() {
         <div className="min-h-[100svh] flex flex-col">
           <Header health={health ?? null} clock={clock} wsConnected={wsConnected} />
           <main id="main-content" className="flex-1 w-full max-w-[1200px] mx-auto px-3 md:px-4 py-5 md:py-8 space-y-4 md:space-y-5">
-            <AnimatePresence mode="wait" initial={false}>
-              <motion.div
-                key={route.screen}
-                initial={reduced ? false : screenFade.initial}
-                animate={reduced ? undefined : screenFade.animate}
-                exit={reduced ? undefined : screenFade.exit}
-                transition={reduced ? { duration: 0 } : screenFade.transition}
-              >
-                {renderScreen()}
-              </motion.div>
-            </AnimatePresence>
+            {/* Mount the destination immediately. An exit-before-enter fade can
+                leave the console transparent when a navigation is interrupted
+                (for example by a backgrounded browser tab). */}
+            <motion.div
+              key={route.screen}
+              initial={reduced ? false : { opacity: 1, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={reduced ? { duration: 0 } : screenFade.transition}
+            >
+              {renderScreen()}
+            </motion.div>
           </main>
           <ReplayBar />
         </div>

@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderHook, act } from '@testing-library/react';
+
+const CSS = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../index.css'), 'utf8');
 import {
   MOBILE_QUERY,
   TABLET_QUERY,
@@ -11,16 +13,8 @@ import {
   useIsTablet,
   useIsDesktop,
   useBreakpoint,
-  useHeavyVisualsAllowed,
-  heavyVisualsAllowedNow,
 } from '../lib/responsive';
 import { installMatchMedia, type MatchMediaHarness } from './matchMedia';
-
-/* Read from disk rather than `import css from '../index.css?raw'`: Vitest is
-   configured with `css: false`, which blanks CSS modules — including ?raw. */
-const CSS = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../index.css'), 'utf8');
-
-const REDUCED = '(prefers-reduced-motion: reduce)';
 
 let mm: MatchMediaHarness;
 
@@ -85,49 +79,6 @@ describe('responsive breakpoint queries', () => {
     }));
     expect(result.current.mobile).toBe(false);
     expect(result.current.desktop).toBe(false);
-  });
-});
-
-describe('useHeavyVisualsAllowed (WebGL gating)', () => {
-  it('refuses the WebGL hero on a phone viewport', () => {
-    install({ [MOBILE_QUERY]: true, [DESKTOP_QUERY]: false, [REDUCED]: false });
-    const { result } = renderHook(() => useHeavyVisualsAllowed());
-    expect(result.current).toBe(false);
-  });
-
-  it('refuses it under prefers-reduced-motion', () => {
-    install({ [MOBILE_QUERY]: false, [DESKTOP_QUERY]: true, [REDUCED]: true });
-    const { result } = renderHook(() => useHeavyVisualsAllowed());
-    expect(result.current).toBe(false);
-  });
-
-  it('allows it on a desktop viewport without reduced motion', () => {
-    install({ [MOBILE_QUERY]: false, [DESKTOP_QUERY]: true, [REDUCED]: false });
-    const { result } = renderHook(() => useHeavyVisualsAllowed());
-    expect(result.current).toBe(true);
-  });
-});
-
-/* The entry (main.tsx) calls this before React renders to decide whether to
-   start the 3D chunk download. A disagreement with the hook would either leak
-   900KB into a phone that then renders the CSS hero anyway, or leave a desktop
-   hero waiting on a chunk nobody requested. */
-describe('heavyVisualsAllowedNow (the preload gate)', () => {
-  it('refuses a phone viewport and a reduced-motion user', () => {
-    install({ [MOBILE_QUERY]: true, [REDUCED]: false });
-    expect(heavyVisualsAllowedNow()).toBe(false);
-
-    install({ [MOBILE_QUERY]: false, [REDUCED]: true });
-    expect(heavyVisualsAllowedNow()).toBe(false);
-
-    install({ [MOBILE_QUERY]: false, [REDUCED]: false });
-    expect(heavyVisualsAllowedNow()).toBe(true);
-  });
-
-  it('reaches the same verdict as the hook', () => {
-    install({ [MOBILE_QUERY]: false, [REDUCED]: false });
-    const { result } = renderHook(() => useHeavyVisualsAllowed());
-    expect(result.current).toBe(heavyVisualsAllowedNow());
   });
 });
 

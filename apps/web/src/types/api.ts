@@ -304,6 +304,7 @@ export interface PradanAnalytics {
   total_bytes: number;
   total_mb: number;
   missing_count: number;
+  files?: string[];
 }
 
 /** Auto-watch loop state, embedded in PradanStatus. */
@@ -316,7 +317,7 @@ export interface PradanScheduleState {
   last_new: string[];
 }
 
-/** GET /api/pradan/status � watcher state + analytics (read-only). */
+/** GET /api/pradan/status  watcher state + analytics (read-only). */
 export interface PradanStatus extends PradanAnalytics {
   watching: boolean;
   inbox: string;
@@ -329,6 +330,7 @@ export interface PradanStatus extends PradanAnalytics {
   polls: number;
   total_new_all_time: number;
   schedule: PradanScheduleState;
+  files?: string[];
 }
 
 export interface PradanFetched {

@@ -1,6 +1,5 @@
 import { useId } from 'react';
-import type { MouseEvent as ReactMouseEvent } from 'react';
-import { motion, useMotionValue } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { useNowcast, useImpact, useStreams, useForecast } from '../lib/hooks';
 import { useRouter, isModifiedClick } from '../lib/router';
 import {
@@ -12,22 +11,7 @@ import {
   riskColor,
 } from '../lib/constants';
 import { usePrefersReducedMotion } from '../lib/motion';
-import { heavyVisualsAllowedNow } from '../lib/responsive';
-
-export function preloadSolarScene(): void {
-  if (typeof window === 'undefined') return;
-  if (window.location.pathname !== '/') return;
-  if (!heavyVisualsAllowedNow()) return;
-  void import('./three/SolarScene');
-}
-
-/**
- * Pure-CSS solar system used when WebGL is not appropriate: the phone hero,
- * the reduced-motion hero, and the Suspense fallback while the 3D chunk is in
- * flight. Same Sun-left / Earth-right composition and the same instrument
- * palette as the WebGL scene, so the landing page does not change identity
- * between devices.
- */
+/** Video-backed landing visual with CSS overlays for reliable rendering. */
 function HeroBackdrop({ label }: { label?: string }) {
   return (
     <div className="absolute inset-0 overflow-hidden bg-[#030305]" aria-label={label} role={label ? 'img' : undefined}>
@@ -36,6 +20,8 @@ function HeroBackdrop({ label }: { label?: string }) {
         loop
         muted
         playsInline
+        preload="metadata"
+        data-testid="hero-video"
         className="absolute inset-0 h-full w-full object-cover opacity-90 pointer-events-none"
         src="/textures/sun_earth_loop.mp4"
       />
@@ -99,25 +85,6 @@ export default function LandingHero() {
   const { go } = useRouter();
   const reduced = usePrefersReducedMotion();
 
-  /* Mouse parallax state — the WebGL camera springs toward the cursor. */
-  const mx = useMotionValue(0);
-  const my = useMotionValue(0);
-  /* 1 while the pointer is over the hero, 0 when it leaves (drives the
-     Sun's proximity interaction and lets it settle back to rest). */
-  const inside = useMotionValue(1);
-
-  const handleMove = (e: ReactMouseEvent<HTMLElement>) => {
-    if (reduced) return;
-    const r = e.currentTarget.getBoundingClientRect();
-    mx.set((e.clientX - r.left) / r.width - 0.5);
-    my.set((e.clientY - r.top) / r.height - 0.5);
-  };
-  const handleLeave = () => {
-    mx.set(0);
-    my.set(0);
-    inside.set(0);
-  };
-
   const { data: nowcast } = useNowcast();
   const { data: impact } = useImpact();
   const { data: streams } = useStreams(120);
@@ -142,14 +109,11 @@ export default function LandingHero() {
 
   return (
     <div className="bg-space">
-      {/* ================= HERO — WebGL solar system, 2D HUD overlay ================= */}
+      {/* ================= HERO — video backdrop, 2D HUD overlay ================= */}
       <section
         className="sk-scene relative h-[100svh] min-h-[560px] md:min-h-[680px] overflow-hidden bg-[#030305]"
-        onMouseMove={handleMove}
-        onMouseLeave={handleLeave}
-        onMouseEnter={() => inside.set(1)}
       >
-        {/* 0 · Nebula dust behind the transparent WebGL canvas */}
+        {/* 0 · Nebula dust behind the video */}
         <div className="sk-nebula" aria-hidden="true" />
 
         {/* 1 · Video background loop */}

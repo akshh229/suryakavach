@@ -569,6 +569,7 @@ def pradan_status():
         {
             **state,
             **analytics,
+            "files": sorted(list(current.keys())),
             "pending": pending,
             "pending_count": len(pending),
             "polls": stats["polls"],
