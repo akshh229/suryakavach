@@ -202,7 +202,7 @@ export default function LandingHero() {
               <span className="sk-callout-dot" aria-hidden="true" />
               The Sun
             </div>
-            <div className="sk-callout-spec">Temperature −5,500 °C</div>
+            <div className="sk-callout-spec">Temperature 5,500 °C</div>
             <div className="sk-callout-spec">Distance 149.6 million km</div>
           </div>
 
