@@ -3,6 +3,7 @@ import { rLevelColor } from '../lib/constants';
 import { useImpactScale } from '../lib/hooks';
 import Panel from './ui/Panel';
 import Metric from './ui/Metric';
+import { safeFixed } from '../lib/format';
 
 interface ImpactGaugeProps {
   impact: ImpactCurrent | null;
@@ -55,11 +56,11 @@ const SECTORS = [
 export default function ImpactGauge({ impact }: ImpactGaugeProps) {
   const { data: scale } = useImpactScale();
   const index = impact?.index ?? null;
+  const hasData = typeof index === 'number' && !Number.isNaN(index);
   const rLvl = impact?.r_level ?? 'R0';
   const rInfo = R_INFO[rLvl] ?? R_INFO.R0;
   const currentBand = scale?.bands.find((band) => band.r_level === rLvl);
-  const color = index !== null ? (currentBand?.color ?? rLevelColor(rLvl)) : 'var(--color-ink-faint)';
-  const hasData = index !== null;
+  const color = hasData ? (currentBand?.color ?? rLevelColor(rLvl)) : 'var(--color-ink-faint)';
   const subscores = Object.entries({ ...(impact?.weights_used ?? {}), ...(scale?.weights ?? {}) });
 
   return (
@@ -83,7 +84,7 @@ export default function ImpactGauge({ impact }: ImpactGaugeProps) {
 
             <div className="flex items-baseline gap-2 my-2">
               <span className="text-4xl font-bold font-mono-val tabular-nums tracking-tight" style={{ color }}>
-                {hasData ? index.toFixed(2) : '—'}
+                {hasData ? safeFixed(index, 2) : '—'}
               </span>
               <span className="font-mono-val text-ink-faint">/ 10.0</span>
             </div>
@@ -91,7 +92,7 @@ export default function ImpactGauge({ impact }: ImpactGaugeProps) {
             {/* R-scale track: one segment per level, filled up to current */}
             <div className="flex w-full h-3 border border-rule overflow-hidden" aria-hidden="true">
               {(scale?.bands ?? []).map((rs) => {
-                const filled = index !== null && index >= rs.min;
+                const filled = hasData && index! >= rs.min;
                 return (
                   <div
                     key={rs.r_level}
@@ -107,7 +108,7 @@ export default function ImpactGauge({ impact }: ImpactGaugeProps) {
               ))}
             </div>
             <span className="sr-only">
-              Impact index {hasData ? index.toFixed(2) : 'unavailable'} of 10, NOAA level {rLvl}
+              Impact index {hasData ? safeFixed(index, 2) : 'unavailable'} of 10, NOAA level {rLvl}
             </span>
 
             <p className="text-xs text-ink-muted mt-3">{rInfo.desc}</p>
@@ -125,23 +126,22 @@ export default function ImpactGauge({ impact }: ImpactGaugeProps) {
           <div>
             <div className="text-[10px] uppercase tracking-[0.12em] text-ink-faint mb-2">Fusion subscores</div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 md:gap-4">
-              {subscores.map(([key, weight]) => (
-                <Metric
-                  key={key}
-                  label={`${SUBSCORE_LABELS[key] ?? key} · ${Math.round(weight * 100)}%`}
-                  value={
-                    impact?.subscores && impact.subscores[key as keyof typeof impact.subscores] !== undefined
-                      ? impact.subscores[key as keyof typeof impact.subscores]!.toFixed(3)
-                      : '—'
-                  }
-                />
-              ))}
+              {subscores.map(([key, weight]) => {
+                const val = impact?.subscores ? impact.subscores[key as keyof typeof impact.subscores] : undefined;
+                return (
+                  <Metric
+                    key={key}
+                    label={`${SUBSCORE_LABELS[key] ?? key} · ${Math.round(weight * 100)}%`}
+                    value={safeFixed(val, 3)}
+                  />
+                );
+              })}
             </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-rule border border-rule">
             {SECTORS.map((sec) => {
-              const risk = index !== null ? sec.risk(index) : '—';
+              const risk = hasData ? sec.risk(index!) : '—';
               const alarm = risk !== '—' && ['HIGH LOSS', 'SURGE RISK', 'SUSPEND EVA', 'DEGRADED'].includes(risk);
               return (
                 <div key={sec.name} className="bg-panel p-3">

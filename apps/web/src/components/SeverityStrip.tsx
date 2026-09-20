@@ -3,6 +3,7 @@ import type { ImpactCurrent } from '../types/api';
 import { rLevelColor } from '../lib/constants';
 import { useImpactScale } from '../lib/hooks';
 import { useRouter, isModifiedClick } from '../lib/router';
+import { safeFixed } from '../lib/format';
 
 interface SeverityStripProps {
   impact: ImpactCurrent | null;
@@ -23,7 +24,7 @@ export default function SeverityStrip({ impact }: SeverityStripProps) {
   const { go } = useRouter();
   const { data: scale } = useImpactScale();
   const index = impact?.index ?? null;
-  const hasData = index !== null;
+  const hasData = typeof index === 'number' && !Number.isNaN(index);
   const color = hasData ? rLevelColor(impact?.r_level ?? 'R0') : 'var(--color-ink-faint)';
   const href = '/impact';
 
@@ -36,7 +37,7 @@ export default function SeverityStrip({ impact }: SeverityStripProps) {
         go(href);
       }}
       className="sk-panel sk-card-press block p-3"
-      aria-label={`Impact severity ${hasData ? `${index.toFixed(2)} of 10, NOAA ${impact?.r_level}` : 'unavailable'} — open the impact screen`}
+      aria-label={`Impact severity ${hasData ? `${safeFixed(index, 2)} of 10, NOAA ${impact?.r_level}` : 'unavailable'} — open the impact screen`}
     >
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
@@ -52,7 +53,7 @@ export default function SeverityStrip({ impact }: SeverityStripProps) {
 
           <div className="mt-1 flex items-baseline gap-2">
             <span className="text-2xl font-bold font-mono-val tabular-nums leading-8" style={{ color }}>
-              {hasData ? index.toFixed(2) : '—'}
+              {hasData ? safeFixed(index, 2) : '—'}
             </span>
             <span className="font-mono-val text-[11px] text-ink-faint">/ 10.0</span>
           </div>
@@ -67,7 +68,7 @@ export default function SeverityStrip({ impact }: SeverityStripProps) {
           <div
             key={rs.r_level}
             className="flex-1 border-r border-rule last:border-r-0"
-            style={{ backgroundColor: hasData && index >= rs.min ? rs.color : 'transparent' }}
+            style={{ backgroundColor: hasData && index! >= rs.min ? rs.color : 'transparent' }}
           />
         ))}
       </div>

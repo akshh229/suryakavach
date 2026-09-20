@@ -5,6 +5,7 @@ import { useRouter, isModifiedClick, catalogueUrl } from '../lib/router';
 import { silkHover, usePrefersReducedMotion } from '../lib/motion';
 import Metric from './ui/Metric';
 import Typewriter from './ui/Typewriter';
+import { safeFixed, safeExp } from '../lib/format';
 
 interface NowcastBannerProps {
   nowcastState: NowcastState | null;
@@ -129,22 +130,22 @@ export default function NowcastBanner({ nowcastState }: NowcastBannerProps) {
           <motion.div {...hover}>
             <Metric
               label="SXR 0.5–10 Å"
-              value={active?.peak_flux_sxr ? active.peak_flux_sxr.toExponential(2) : '—'}
+              value={safeExp(active?.peak_flux_sxr, 2)}
               unit={active?.peak_flux_sxr ? 'W/m²' : undefined}
             />
           </motion.div>
           <motion.div {...hover}>
             <Metric
               label="HXR 10–150 keV"
-              value={active?.peak_flux_hxr ? active.peak_flux_hxr.toExponential(2) : '—'}
+              value={safeExp(active?.peak_flux_hxr, 2)}
               unit={active?.peak_flux_hxr ? 'W/m²' : undefined}
             />
           </motion.div>
           <motion.div {...hover}>
-            <Metric label="Spectral hardness" value={active?.hardness ? active.hardness.toFixed(3) : '—'} />
+            <Metric label="Spectral hardness" value={safeFixed(active?.hardness, 3)} />
           </motion.div>
           <motion.div {...hover}>
-            <Metric label="Impulsivity" value={active?.impulsivity ? active.impulsivity.toFixed(2) : '—'} />
+            <Metric label="Impulsivity" value={safeFixed(active?.impulsivity, 2)} />
           </motion.div>
           <motion.div {...hover}>
             <Metric label="Severity band" value={active?.severity_band ?? '—'} />

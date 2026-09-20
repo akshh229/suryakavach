@@ -11,6 +11,7 @@ import { goesClassColor, goesClassBg, SERIES_COLORS, CHART_COLORS } from '../lib
 import { useRouter, isModifiedClick, catalogueUrl } from '../lib/router';
 import { detailSlide, usePrefersReducedMotion } from '../lib/motion';
 import { useIsMobile } from '../lib/responsive';
+import { safeFixed, safeExp } from '../lib/format';
 
 const FILTERS = ['ALL', 'X', 'M', 'C', 'B'] as const;
 
@@ -68,24 +69,24 @@ function FlareDetailContent({ flare }: { flare: FlareDetail }) {
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 p-3 md:p-4">
-        <Metric label="SXR peak" value={flare.peak_flux_sxr?.toExponential(3) ?? '—'} unit="W/m²" tone={SERIES_COLORS.sxr} />
-        <Metric label="HXR peak" value={flare.peak_flux_hxr?.toExponential(3) ?? '—'} unit="W/m²" tone={SERIES_COLORS.hxr} />
-        <Metric label="Hardness" value={flare.hardness?.toFixed(3) ?? '—'} />
-        <Metric label="Impulsivity" value={flare.impulsivity?.toFixed(2) ?? '—'} />
-        <Metric label="Impact index" value={flare.impact_index?.toFixed(2) ?? '—'} unit="/ 10" />
+        <Metric label="SXR peak" value={safeExp(flare.peak_flux_sxr, 3)} unit="W/m²" tone={SERIES_COLORS.sxr} />
+        <Metric label="HXR peak" value={safeExp(flare.peak_flux_hxr, 3)} unit="W/m²" tone={SERIES_COLORS.hxr} />
+        <Metric label="Hardness" value={safeFixed(flare.hardness, 3)} />
+        <Metric label="Impulsivity" value={safeFixed(flare.impulsivity, 2)} />
+        <Metric label="Impact index" value={safeFixed(flare.impact_index, 2)} unit="/ 10" />
         <Metric label="R-level" value={flare.r_level ?? '—'} />
         <Metric label="Detection" value={flare.detection_method ?? '—'} />
-        <Metric label="Posterior" value={flare.posterior?.toFixed(3) ?? '—'} />
+        <Metric label="Posterior" value={safeFixed(flare.posterior, 3)} />
       </div>
 
       {flare.subscores && (
         <div className="px-3 md:px-4 pb-3 md:pb-4">
           <div className="text-[10px] uppercase tracking-[0.12em] text-ink-faint mb-2">Impact subscores</div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-            <Metric label="Peak SXR" value={flare.subscores.peak_sxr.toFixed(3)} />
-            <Metric label="Hardness" value={flare.subscores.hardness.toFixed(3)} />
-            <Metric label="Impulsivity" value={flare.subscores.impulsivity.toFixed(3)} />
-            <Metric label="Duration" value={flare.subscores.duration.toFixed(3)} />
+            <Metric label="Peak SXR" value={safeFixed(flare.subscores.peak_sxr, 3)} />
+            <Metric label="Hardness" value={safeFixed(flare.subscores.hardness, 3)} />
+            <Metric label="Impulsivity" value={safeFixed(flare.subscores.impulsivity, 3)} />
+            <Metric label="Duration" value={safeFixed(flare.subscores.duration, 3)} />
           </div>
         </div>
       )}
@@ -349,7 +350,7 @@ export default function FlareCatalogue() {
                       </span>
                       <span className="font-mono-val text-sm font-semibold">{row.id}</span>
                       <span className="ml-auto font-mono-val text-sm font-bold tabular-nums shrink-0">
-                        {row.impact_index.toFixed(2)}
+                        {safeFixed(row.impact_index, 2)}
                         <span className="text-ink-faint font-normal"> /10</span>
                       </span>
                     </div>
@@ -363,16 +364,16 @@ export default function FlareCatalogue() {
                       <div className="min-w-0">
                         <dt className="text-[10px] uppercase tracking-[0.1em] text-ink-faint">SXR</dt>
                         <dd className="mt-0.5 text-ink-muted truncate" style={{ color: SERIES_COLORS.sxr }}>
-                          {row.peak_flux_sxr ? row.peak_flux_sxr.toExponential(1) : '—'}
+                          {safeExp(row.peak_flux_sxr, 1)}
                         </dd>
                       </div>
                       <div className="min-w-0">
                         <dt className="text-[10px] uppercase tracking-[0.1em] text-ink-faint">Hardness</dt>
-                        <dd className="mt-0.5 text-ink-muted truncate">{row.hardness ? row.hardness.toFixed(2) : '—'}</dd>
+                        <dd className="mt-0.5 text-ink-muted truncate">{safeFixed(row.hardness, 2)}</dd>
                       </div>
                       <div className="min-w-0">
                         <dt className="text-[10px] uppercase tracking-[0.1em] text-ink-faint">Impuls.</dt>
-                        <dd className="mt-0.5 text-ink-muted truncate">{row.impulsivity ? row.impulsivity.toFixed(2) : '—'}</dd>
+                        <dd className="mt-0.5 text-ink-muted truncate">{safeFixed(row.impulsivity, 2)}</dd>
                       </div>
                     </dl>
 
@@ -448,15 +449,15 @@ export default function FlareCatalogue() {
                           {row.class || 'A0.0'}
                         </td>
                         <td className="px-3 py-2 text-right text-ink-muted">
-                          {row.peak_flux_sxr ? row.peak_flux_sxr.toExponential(2) : '—'}
+                          {safeExp(row.peak_flux_sxr, 2)}
                         </td>
                         <td className="px-3 py-2 text-right text-ink-muted">
-                          {row.hardness ? row.hardness.toFixed(3) : '—'}
+                          {safeFixed(row.hardness, 3)}
                         </td>
                         <td className="px-3 py-2 text-right text-ink-muted">
-                          {row.impulsivity ? row.impulsivity.toFixed(2) : '—'}
+                          {safeFixed(row.impulsivity, 2)}
                         </td>
-                        <td className="px-3 py-2 text-right font-semibold">{row.impact_index.toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right font-semibold">{safeFixed(row.impact_index, 2)}</td>
                         <td className="px-3 py-2 text-ink-faint">{row.detection_method || '—'}</td>
                       </tr>
                     );
