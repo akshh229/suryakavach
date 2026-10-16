@@ -27,6 +27,10 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}([T ].*)?$")
 
 UTC = timezone.utc
 log = logging.getLogger("suryakavach.api")
+
+# Background boot task reference, used for clean shutdown and error retrieval.
+_boot_task: asyncio.Task | None = None
+_live_refresh_task: asyncio.Task | None = None
 cfg = load_config()
 _buckets: dict[str, deque] = defaultdict(deque)
 # Hard ceiling on tracked client IPs. Without it, one host spraying spoofed
@@ -132,28 +136,97 @@ class NotReady(Exception):
 
 
 def require_ready() -> None:
-    if not runtime.booted:
+    if not runtime.ready:
         raise NotReady()
+
+
+async def _supervised_boot() -> None:
+    """Run runtime.boot() in a worker thread with structured timing logs.
+
+    Any exception is caught, logged, and recorded on the runtime so the
+    process stays alive (health endpoint reachable) even after a failed boot.
+    """
+    t0 = time.monotonic()
+    log.info("boot.start")
+    try:
+        await asyncio.to_thread(runtime.boot)
+    except Exception:
+        elapsed = time.monotonic() - t0
+        log.exception("boot.failed elapsed=%.2fs", elapsed)
+        return
+    elapsed = time.monotonic() - t0
+    if runtime.ready:
+        log.info("boot.complete elapsed=%.2fs", elapsed)
+    else:
+        log.error("boot.failed elapsed=%.2fs", elapsed)
+
+
+async def _refresh_live_and_broadcast() -> dict:
+    """Run one deduplicated GOES refresh and notify connected dashboards."""
+    status = await asyncio.to_thread(runtime.refresh_live)
+    await _broadcast(
+        {
+            "live": status,
+            "clock": {"utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")},
+        }
+    )
+    return status
+
+
+def _record_live_refresh_outcome(task: asyncio.Task) -> None:
+    """Retrieve detached refresh failures so asyncio never drops them."""
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        return
+    except Exception as exc:
+        log.error("background live refresh failed error_type=%s", type(exc).__name__)
+
+
+def _start_live_refresh() -> asyncio.Task:
+    """Return the single in-flight live refresh task, creating it if needed."""
+    global _live_refresh_task
+    if _live_refresh_task is None or _live_refresh_task.done():
+        _live_refresh_task = asyncio.create_task(_refresh_live_and_broadcast())
+        _live_refresh_task.add_done_callback(_record_live_refresh_outcome)
+    return _live_refresh_task
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _boot_task, _live_refresh_task
     runtime.loop = asyncio.get_running_loop()
-    # Engine boot takes seconds (synthetic cache + BOCPD over every day + DB
-    # writes). Run it in a worker thread so the event loop can serve
-    # /api/health immediately instead of the platform's health check timing out.
-    await asyncio.to_thread(runtime.boot)
+
+    # Launch boot as a background task so FastAPI yields (starts serving)
+    # immediately. This lets /api/health respond to Render's health check
+    # while the heavy initialisation runs in a worker thread.
+    _boot_task = asyncio.create_task(_supervised_boot())
+
+    # Sim loop and live loop wait for readiness internally before doing
+    # real work, so they can be created now.
     task = asyncio.create_task(_sim_loop())
     live_task = asyncio.create_task(_goes_live_loop())
     try:
         yield
     finally:
+        # A task awaiting ``to_thread`` cannot stop its Python worker thread.
+        # Give boot a short, bounded chance to finish rather than pretending a
+        # cancellation stopped it; normal process shutdown remains available.
         task.cancel()
         live_task.cancel()
         with suppress(asyncio.CancelledError):
             await task
         with suppress(asyncio.CancelledError):
             await live_task
+        if _live_refresh_task is not None:
+            _live_refresh_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await _live_refresh_task
+        if _boot_task is not None:
+            try:
+                await asyncio.wait_for(asyncio.shield(_boot_task), timeout=10.0)
+            except asyncio.TimeoutError:
+                log.warning("boot still running after 10s shutdown grace period")
 
 
 def _goes_refresh_minutes() -> float:
@@ -168,20 +241,19 @@ async def _goes_live_loop():
 
     One polite GET per interval; any failure is logged and the loop continues
     so a transient outage never kills auto-update for the process lifetime.
+    Waits for boot to finish before starting real work.
     """
-    await asyncio.sleep(10.0)  # let boot + first clients settle
+    # Wait for boot to complete before refreshing live data.
+    while not runtime.ready and not runtime.booted:
+        await asyncio.sleep(1.0)
+    if not runtime.ready:
+        log.error("goes live loop not started because boot failed")
+        return
+    await asyncio.sleep(10.0)  # let first clients settle
     while True:
         await asyncio.sleep(_goes_refresh_minutes() * 60.0)
         try:
-            status = await asyncio.to_thread(runtime.refresh_live)
-            await _broadcast(
-                {
-                    "live": status,
-                    "clock": {
-                        "utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    },
-                }
-            )
+            await _start_live_refresh()
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -223,7 +295,13 @@ async def _nf(_req, exc: NotFound):
 @app.exception_handler(NotReady)
 async def _nr(_req, _exc):
     return JSONResponse(
-        {"data": None, "meta": {"error": "starting", "detail": "engines are still booting"}},
+        {
+            "data": None,
+            "meta": {
+                "error": "starting" if not runtime.booted else "unavailable",
+                "detail": "engines are still booting" if not runtime.booted else "initialization failed",
+            },
+        },
         status_code=503,
         headers={"Retry-After": "5"},
     )
@@ -231,7 +309,13 @@ async def _nr(_req, _exc):
 
 @app.middleware("http")
 async def _limit(request: Request, call_next):
-    if request.url.path.startswith("/api/") and request.method != "OPTIONS":
+    # Render's liveness probe must always reach the app, even if one client
+    # exhausts the in-process rate-limit bucket.
+    if (
+        request.url.path.startswith("/api/")
+        and request.url.path != "/api/health"
+        and request.method != "OPTIONS"
+    ):
         try:
             rate_limit(request)
         except RateLimited:
@@ -245,7 +329,14 @@ async def _sim_loop():
     Any exception from a single tick is logged and swallowed: previously one
     transient failure killed this task for the whole process lifetime, leaving
     the API up but the replay frozen with no error surfaced anywhere.
+    Waits for boot to finish before ticking.
     """
+    # Wait for boot to complete before ticking.
+    while not runtime.ready and not runtime.booted:
+        await asyncio.sleep(1.0)
+    if not runtime.ready:
+        log.error("simulation loop not started because boot failed")
+        return
     while True:
         # speed N => N data-minutes per real minute → sleep 60/N seconds.
         # Wait on speed_changed so a speed update interrupts the sleep instead
@@ -259,7 +350,7 @@ async def _sim_loop():
             else:
                 runtime.speed_changed.clear()
                 continue
-            if not runtime.playing or not runtime.booted:
+            if not runtime.playing or not runtime.ready:
                 continue
             # tick() is CPU-bound (~10 ms) and takes a threading lock; keep it
             # off the event loop so requests and WS sends are not stalled.
@@ -296,8 +387,29 @@ async def _broadcast(payload: dict) -> None:
 
 @app.get("/api/health")
 def health():
-    """Always answers, even mid-boot, so platform health checks can succeed."""
+    """Always answers, even mid-boot, so platform health checks can succeed.
+
+    This is a *liveness* probe: it proves the process is up and the HTTP
+    stack works. It does NOT gate on readiness — that is ``/api/ready``.
+    """
     return runtime.envelope(runtime.health())
+
+
+@app.get("/api/ready")
+def ready():
+    """Readiness probe for frontends and orchestration.
+
+    * 200 — engines initialised and usable.
+    * 503 with ``Retry-After`` — still starting or boot failed.
+    """
+    info = runtime.readiness()
+    if info["ready"]:
+        return runtime.envelope(info)
+    return JSONResponse(
+        runtime.envelope(info),
+        status_code=503,
+        headers={"Retry-After": "3"},
+    )
 
 
 @app.get("/api/streams/latest")
@@ -436,6 +548,22 @@ def get_metrics(
             except Exception:
                 pass
 
+    if not run_data:
+        if run_id:
+            raise NotFound(f"Evaluation run '{run_id}' not found")
+        elif cohort:
+            raise NotFound(f"Evaluation run for cohort '{cohort}' not found")
+        else:
+            # This optional baseline is intentionally deferred out of runtime
+            # boot. It is only needed by the metrics view and must not delay
+            # health/readiness for every cold start.
+            runtime._seed_baseline_evaluation()
+            try:
+                from suryakavach.db import get_latest_evaluation_run
+
+                run_data = get_latest_evaluation_run(conn)
+            except Exception:
+                run_data = None
     if not run_data:
         if run_id:
             raise NotFound(f"Evaluation run '{run_id}' not found")
@@ -678,20 +806,27 @@ def pradan_schedule_stop():
 async def goes_live(window: int = Query(180, ge=10, le=1440)):
     """Live GOES XRS snapshot: streams + nowcast + forecast + impact.
 
-    Stale-while-revalidate: serves the cached snapshot immediately; refreshes
-    in the background when older than 5 minutes. First call ever triggers a
-    synchronous refresh (may take seconds on the NOAA fetch).
+    Stale-while-revalidate: serves a cached snapshot immediately and refreshes
+    it in the background when stale. With no snapshot yet, waits at most 35 s
+    for the first bounded NOAA fetch.
     """
     require_ready()
     status = runtime.live_status()
     from suryakavach.ingest.goes_live import is_stale
 
-    if not status.get("available") or is_stale(status.get("fetched_at"), _goes_refresh_minutes()):
+    if not status.get("available"):
         try:
-            await asyncio.to_thread(runtime.refresh_live)
-        except Exception as exc:
-            if not status.get("available"):
-                raise BadRequest(f"live refresh failed: {exc}") from exc
+            await asyncio.wait_for(asyncio.shield(_start_live_refresh()), timeout=35.0)
+        except asyncio.TimeoutError:
+            payload = runtime.envelope(None)
+            payload["meta"].update({"error": "live_unavailable", "detail": "live data is temporarily unavailable"})
+            return JSONResponse(payload, status_code=503, headers={"Retry-After": "30"})
+        except Exception:
+            payload = runtime.envelope(None)
+            payload["meta"].update({"error": "live_unavailable", "detail": "live data is temporarily unavailable"})
+            return JSONResponse(payload, status_code=503, headers={"Retry-After": "30"})
+    elif is_stale(status.get("fetched_at"), _goes_refresh_minutes()):
+        _start_live_refresh()
     try:
         payload = runtime.live_payload(window)
     except RuntimeError as exc:
@@ -704,10 +839,9 @@ async def goes_live_refresh():
     """Force a fresh GOES XRS fetch + nowcast, and push it to dashboards."""
     require_ready()
     try:
-        status = await asyncio.to_thread(runtime.refresh_live)
+        status = await _start_live_refresh()
     except Exception as exc:
         raise BadRequest(f"live refresh failed: {exc}") from exc
-    await _broadcast({"live": status})
     return runtime.envelope(status, {"source": "noaa.goes.xrs", "live": True})
 
 
@@ -721,7 +855,7 @@ def goes_live_status():
 @app.websocket("/ws/live")
 async def ws_live(ws: WebSocket):
     await ws.accept()
-    if not runtime.booted:
+    if not runtime.ready:
         # Nothing to stream yet; tell the client to retry rather than holding a
         # socket open that will never receive a snapshot.
         await ws.close(code=1013, reason="starting")

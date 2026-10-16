@@ -147,6 +147,7 @@ The SURYAKAVACH API uses UTC ISO-8601 timestamps and a `{ data, meta }` response
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/health` | Service, data-timestamp, and engine readiness status |
+| `GET /api/ready` | Engine readiness probe; returns 503 with `Retry-After` during startup or failure |
 | `GET /api/streams/latest?window=120` | Latest fused SoLEXS, HEL1OS, MAG stream window |
 | `GET /api/nowcast/state` | Lifecycle state and active flare nowcast |
 | `GET /api/flare/catalogue` | Filtered, paginated flare catalogue; CSV/JSON export |

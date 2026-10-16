@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 import json
+import logging
 import threading
+import time
 import uuid
 from dataclasses import replace
 from typing import Any
@@ -22,6 +24,7 @@ from suryakavach.ingest.pradan import load_real_day_files
 from suryakavach.ingest.synthetic import build_all_days
 
 UTC = timezone.utc
+log = logging.getLogger("suryakavach.runtime")
 
 
 def _ffill(x: np.ndarray, default: float = 1e-12) -> np.ndarray:
@@ -59,7 +62,10 @@ class Runtime:
     def __init__(self, boot: bool = True) -> None:
         self.cfg = load_config()
         self.data_path = data_dir(self.cfg)
-        self.conn = connect(self.data_path / "suryakavach.sqlite")
+        # Opening SQLite creates files and the Supabase wrapper validates its
+        # configuration.  Defer that work until boot so importing the ASGI app
+        # stays cheap enough for liveness probes to bind promptly.
+        self._conn: Any | None = None
         self.lock = threading.RLock()
         self.ws_clients: set[asyncio.Queue] = set()
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -88,7 +94,10 @@ class Runtime:
         self._forecast_high_latched = False
         self._gap_latched = False
         self.booted = False
+        self._boot_ok = False  # True only after successful boot
         self.boot_error: str | None = None
+        # Monotonic timestamps for each boot stage (for diagnostic logs).
+        self._boot_timings: dict[str, float] = {}
         # GOES XRS live snapshot (independent of the synthetic replay cache).
         # Populated on demand by refresh_live() (network) or from the last
         # persisted real_days/ snapshot at boot (no network). Never part of
@@ -99,8 +108,22 @@ class Runtime:
         self.live_meta: dict | None = None
         self.live_error: str | None = None
         self.live_fetched_at: str | None = None
+        # Deduplication lock for live refreshes: only one refresh at a time.
+        self._live_refresh_lock = threading.Lock()
         if boot:
             self.boot()
+
+    @property
+    def ready(self) -> bool:
+        """True only after boot completed successfully."""
+        return self._boot_ok
+
+    @property
+    def conn(self) -> Any:
+        """Open the configured persistence backend only when it is needed."""
+        if self._conn is None:
+            self._conn = connect(self.data_path / "suryakavach.sqlite")
+        return self._conn
 
     def boot(self) -> None:
         """Build the synthetic cache and fit the engines.
@@ -111,22 +134,66 @@ class Runtime:
         ``/api/health`` can report a degraded service instead of the process
         dying before it binds a port.
         """
-        if self.booted:
+        if self._boot_ok:
             return
+        boot_t0 = time.monotonic()
+        stage = "connect_database"
+        self.boot_error = None
+        self._boot_timings = {}
         try:
+            t = time.monotonic()
+            # Initialise persistence before deriving in-memory state, but only
+            # after the HTTP server has begun accepting liveness checks.
+            _ = self.conn
+            self._boot_timings[stage] = time.monotonic() - t
+            log.info("boot.stage.complete stage=%s elapsed=%.2fs", stage, self._boot_timings[stage])
+
+            stage = "build_days"
+            t = time.monotonic()
             self.days = self._build_preferred_days()
+            self._boot_timings["build_days"] = time.monotonic() - t
+            log.info("boot.stage.complete stage=%s elapsed=%.2fs", stage, self._boot_timings[stage])
+
+            stage = "load_live"
+            t = time.monotonic()
             self._load_persisted_live()
+            self._boot_timings["load_live"] = time.monotonic() - t
+            log.info("boot.stage.complete stage=%s elapsed=%.2fs", stage, self._boot_timings[stage])
+
+            stage = "fit_forecast"
+            t = time.monotonic()
             self._fit_forecast()
+            self._boot_timings["fit_forecast"] = time.monotonic() - t
+            log.info("boot.stage.complete stage=%s elapsed=%.2fs", stage, self._boot_timings[stage])
+
+            stage = "nowcasts"
+            t = time.monotonic()
             self._run_all_nowcasts()
+            self._boot_timings["nowcasts"] = time.monotonic() - t
+            log.info("boot.stage.complete stage=%s elapsed=%.2fs", stage, self._boot_timings[stage])
+
+            stage = "persist_flares"
+            t = time.monotonic()
             self._persist_flares()
-            self._seed_baseline_evaluation()
+            self._boot_timings["persist_flares"] = time.monotonic() - t
+            log.info("boot.stage.complete stage=%s elapsed=%.2fs", stage, self._boot_timings[stage])
+
             self.engine_status = {k: "ok" for k in self.engine_status}
+            self._boot_ok = True
         except Exception as exc:  # pragma: no cover - defensive boot guard
-            self.boot_error = f"{type(exc).__name__}: {exc}"
+            # Keep the client-visible failure deliberately generic.  Provider
+            # exceptions can include connection strings or other deployment
+            # details; the full traceback remains in server logs.
+            self.boot_error = "initialization failed"
             self.engine_status = {k: "error" for k in self.engine_status}
-            raise
+            log.exception("boot.stage.failed stage=%s error_type=%s", stage, type(exc).__name__)
+            # Do NOT set _boot_ok = True on failure; ready stays False.
+            return
         finally:
             self.booted = True
+            total = time.monotonic() - boot_t0
+            self._boot_timings["total"] = total
+            log.info("boot.finished ok=%s total=%.2fs", self._boot_ok, total)
         # Default demo: 2024-02-22 at 21:00 so onset (22:08) arrives quickly at 20×
         default_event = str(self.cfg["replay"]["default_event"])
         self.event_date = default_event if default_event in self.days else self.available_dates()[0]
@@ -194,7 +261,7 @@ class Runtime:
                 days[day] = real_day
         return days
 
-    def _fit_forecast(self) -> None:
+    def _fit_forecast(self, extra_day: dict | None = None, hazard: DiscreteHazard | None = None) -> None:
         xs = []
         yc = []
         ym = []
@@ -202,8 +269,9 @@ class Runtime:
         # Observed GOES live day joins training once it carries versioned
         # labels (goes-threshold-v1). Synthetic days keep the model grounded;
         # the live day adapts it to real flux levels.
-        if self.live_day and self.live_day.get("truth"):
-            fit_days.append(self.live_day)
+        live_day = extra_day if extra_day is not None else self.live_day
+        if live_day and live_day.get("truth"):
+            fit_days.append(live_day)
         for day in fit_days:
             if day.get("source_state") not in {"synthetic", "observed_calibrated"} or not day.get("truth"):
                 continue
@@ -226,7 +294,7 @@ class Runtime:
         X = np.array([vectorize(row) if isinstance(row, dict) else row for row in xs], dtype=float)
         if len(X) == 0:
             raise RuntimeError("no labelled calibrated days are available to fit the forecast")
-        self.hazard.fit(X, np.array(yc), np.array(ym))
+        (hazard or self.hazard).fit(X, np.array(yc), np.array(ym))
 
     def _run_all_nowcasts(self) -> None:
         for key, day in self.days.items():
@@ -242,7 +310,12 @@ class Runtime:
             day["evt"] = intensity_quantiles(peaks)
 
     def _persist_flares(self) -> None:
-        self.conn.execute("DELETE FROM flares")
+        """Idempotent upsert of the flare catalogue.
+
+        Uses INSERT OR REPLACE (upsert) instead of DELETE + INSERT so existing
+        records from a previous boot are preserved across restarts and
+        concurrent deployments cannot race on a shared DELETE.
+        """
         # Under Supabase each upsert is an HTTP round-trip; buffer them into a
         # few bulk requests instead of ~115 sequential calls at boot.
         batch = getattr(self.conn, "batch_flares", None)
@@ -362,34 +435,60 @@ class Runtime:
             self.live_fetched_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def refresh_live(self) -> dict:
-        """Fetch GOES XRS, label, re-run nowcast, and refit forecast (blocking)."""
-        from suryakavach.ingest.goes_live import refresh_goes_live
+        """Fetch GOES XRS, label, re-run nowcast, and refit forecast (blocking).
 
+        Deduplicated: if another thread is already refreshing, skip and return
+        the current status instead of starting a second concurrent refresh.
+        """
+        if not self._live_refresh_lock.acquire(blocking=False):
+            # Another refresh is already running; return current status.
+            return self.live_status()
         try:
-            key, day, meta = refresh_goes_live(self.data_path)
-        except Exception as exc:
-            with self.lock:
-                self.live_error = f"{type(exc).__name__}: {exc}"
-            raise
-        with self.lock:
-            self.live_key = key
-            self.live_day = day
-            self.live_meta = meta
-            self.live_error = None
-            self.live_fetched_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-            # Refit so the forecast learns from the new observed labels too.
-            # _fit_forecast is deterministic (SGD from zeros), ~seconds.
+            from suryakavach.ingest.goes_live import refresh_goes_live
+
             try:
-                self._fit_forecast()
-            except Exception as exc:  # keep the fresh snapshot even if fit fails
-                self.live_error = f"fit: {type(exc).__name__}: {exc}"
-            self.live_nowcast = run_nowcast(_ffill(day["solexs"]), _ffill(day["hel1os"]), self.cfg)
-        return self.live_status()
+                key, day, meta = refresh_goes_live(self.data_path)
+            except Exception as exc:
+                with self.lock:
+                    self.live_error = f"{type(exc).__name__}: {exc}"
+                raise
+
+            # Build the replacement state outside the shared lock, then
+            # publish the matching (day, metadata, nowcast) tuple atomically.
+            new_nowcast = run_nowcast(_ffill(day["solexs"]), _ffill(day["hel1os"]), self.cfg)
+
+            # The live day is a labelled input to the forecast fit.  Fit it
+            # before publishing so readers never see a new live snapshot with
+            # an old hazard model, and never hold the shared request lock
+            # across this CPU-bound work.
+            new_hazard = DiscreteHazard()
+            try:
+                self._fit_forecast(extra_day=day, hazard=new_hazard)
+            except Exception as exc:
+                fit_error = f"fit: {type(exc).__name__}"
+            else:
+                fit_error = None
+
+            with self.lock:
+                self.live_key = key
+                self.live_day = day
+                self.live_meta = meta
+                self.live_error = None
+                self.live_fetched_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+                self.live_nowcast = new_nowcast
+                if fit_error is None:
+                    self.hazard = new_hazard
+                # A fit failure does not discard a valid observed snapshot.
+                self.live_error = fit_error
+            return self.live_status()
+        finally:
+            self._live_refresh_lock.release()
 
     def live_status(self) -> dict:
         with self.lock:
             day = self.live_day
             nc = self.live_nowcast
+            hazard = self.hazard
         if day is None:
             return {
                 "available": False,
@@ -467,7 +566,7 @@ class Runtime:
         # applied to live features.
         last_onset = nc.events[-1].onset_idx if nc.events else None
         feat = rolling_features(sxr, hxr, last_flare_idx=last_onset)
-        forecast = self.hazard.predict(feat, list(self.cfg["horizons"]))
+        forecast = hazard.predict(feat, list(self.cfg["horizons"]))
         if nc.events:
             peak = max(float(e.peak_flux_sxr) for e in nc.events)
             dur = max(int((e.end_idx or e.peak_idx) - e.onset_idx) for e in nc.events)
@@ -602,10 +701,10 @@ class Runtime:
 
     def health(self) -> dict:
         engines = dict(self.engine_status)
-        ok = self.booted and all(v == "ok" for v in engines.values())
+        ok = self._boot_ok and all(v == "ok" for v in engines.values())
         out = {
-            "status": "ok" if ok else "degraded",
-            "data_last_timestamp": self._cursor_iso(),
+            "status": "ok" if ok else ("starting" if not self.booted else "degraded"),
+            "data_last_timestamp": self._cursor_iso() if self._boot_ok else None,
             "source_state": self.source_state() if self.days else None,
             "engines": engines,
             "mode": self.mode,
@@ -621,7 +720,32 @@ class Runtime:
         }
         if self.boot_error:
             out["error"] = self.boot_error
+        if self._boot_timings:
+            out["boot_timings"] = dict(self._boot_timings)
         return out
+
+    def readiness(self) -> dict:
+        """Structured readiness check for /api/ready."""
+        if self._boot_ok:
+            return {
+                "ready": True,
+                "state": "ready",
+                "engines": dict(self.engine_status),
+            }
+        state = "failed" if self.booted and not self._boot_ok else "starting"
+        out: dict = {
+            "ready": False,
+            "state": state,
+            "engines": dict(self.engine_status),
+        }
+        if self.boot_error:
+            out["error"] = self.boot_error
+        return out
+
+    @property
+    def live_refreshing(self) -> bool:
+        """Whether a deduplicated GOES refresh is currently in progress."""
+        return self._live_refresh_lock.locked()
 
     def streams_latest(self, window: int = 120) -> dict:
         day = self.day()
