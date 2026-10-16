@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from './api';
+import { api, BackendStartingError } from './api';
 import { useReplayStore } from '../store/replayStore';
 import type {
   StreamsLatest,
@@ -25,46 +25,117 @@ import type {
   GoesLiveStatus,
 } from '../types/api';
 
+/**
+ * Retry configuration for engine-dependent hooks.
+ * Retries up to 20 times on 503 (backend starting) with bounded backoff + jitter,
+ * and respects Retry-After headers. Other errors retry 2 times normally.
+ */
+function engineRetry(failureCount: number, error: unknown): boolean {
+  if (error instanceof BackendStartingError) {
+    return failureCount < 20; // ~60s max with 3s Retry-After
+  }
+  return failureCount < 2;
+}
+
+function engineRetryDelay(attempt: number, error: unknown): number {
+  if (error instanceof BackendStartingError && error.retryAfter) {
+    // Respect Retry-After + small jitter to avoid thundering herd
+    return error.retryAfter * 1000 + Math.random() * 500;
+  }
+  return Math.min(1000 * 2 ** attempt, 10_000) + Math.random() * 500;
+}
+
+/** Readiness check: polls /api/ready until the backend is usable. */
+export function useBackendReady() {
+  return useQuery({
+    queryKey: ['backendReady'],
+    queryFn: ({ signal }) => api.get<{ ready: boolean; state: string }>('/api/ready', { signal }),
+    retry: (failureCount, error) => {
+      if (error instanceof BackendStartingError) return failureCount < 20;
+      return failureCount < 3;
+    },
+    retryDelay: (attempt, error) => {
+      if (error instanceof BackendStartingError) {
+        return (error.retryAfter ?? 3) * 1000 + Math.random() * 500;
+      }
+      return Math.min(1000 * 2 ** attempt, 10_000);
+    },
+    staleTime: 30_000,
+    refetchInterval: (query) => {
+      // Stop polling once ready; poll every 3s while starting
+      return query.state.data?.ready ? false : 3_000;
+    },
+  });
+}
+
+/** Gate engine calls behind the shared readiness query. React Query deduplicates
+ * this key, so mounting many dashboard panels still produces one readiness
+ * poll rather than a request storm. */
+function useEngineEnabled(enabled: boolean = true): boolean {
+  const readiness = useBackendReady();
+  return enabled && readiness.data?.ready === true;
+}
+
 export function useStreams(windowSize: number) {
+  const enabled = useEngineEnabled();
   return useQuery({
     queryKey: ['streams', windowSize],
-    queryFn: () => api.get<StreamsLatest>(`/api/streams/latest?window=${windowSize}`),
+    queryFn: ({ signal }) => api.get<StreamsLatest>(`/api/streams/latest?window=${windowSize}`, { signal }),
+    enabled,
     staleTime: 10_000,
     refetchInterval: 10_000,
+    retry: engineRetry,
+    retryDelay: engineRetryDelay,
   });
 }
 
 export function useNowcast() {
+  const enabled = useEngineEnabled();
   return useQuery({
     queryKey: ['nowcast'],
-    queryFn: () => api.get<NowcastState>('/api/nowcast/state'),
+    queryFn: ({ signal }) => api.get<NowcastState>('/api/nowcast/state', { signal }),
+    enabled,
     staleTime: 10_000,
     refetchInterval: 10_000,
+    retry: engineRetry,
+    retryDelay: engineRetryDelay,
   });
 }
 
 export function useForecast() {
+  const enabled = useEngineEnabled();
   return useQuery({
     queryKey: ['forecast'],
-    queryFn: () => api.get<ForecastData>('/api/forecast/horizons'),
+    queryFn: ({ signal }) => api.get<ForecastData>('/api/forecast/horizons', { signal }),
+    enabled,
     staleTime: 30_000,
+    retry: engineRetry,
+    retryDelay: engineRetryDelay,
   });
 }
 
 export function useImpact() {
+  const enabled = useEngineEnabled();
   return useQuery({
     queryKey: ['impact'],
-    queryFn: () => api.get<ImpactCurrent>('/api/impact/current'),
+    queryFn: ({ signal }) => api.get<ImpactCurrent>('/api/impact/current', { signal }),
+    enabled,
     staleTime: 10_000,
     refetchInterval: 10_000,
+    retry: engineRetry,
+    retryDelay: engineRetryDelay,
   });
 }
 
 export function useImpactScale() {
+  const enabled = useEngineEnabled();
   return useQuery({
     queryKey: ['impactScale'],
-    queryFn: () => api.get<ImpactScale>('/api/impact/scale'),
+    queryFn: ({ signal }) => api.get<ImpactScale>('/api/impact/scale', { signal }),
+    enabled,
     staleTime: Infinity,
+    retry: engineRetry,
+    retryDelay: engineRetryDelay,
   });
 }
 
@@ -78,43 +149,56 @@ export function useHealth() {
 }
 
 export function useCatalogue(minClass: string = 'A') {
+  const enabled = useEngineEnabled();
   return useQuery({
     queryKey: ['catalogue', minClass],
-    queryFn: () => api.get<CatalogueData>(`/api/flare/catalogue?min_class=${minClass}&page_size=50`),
+    queryFn: ({ signal }) => api.get<CatalogueData>(`/api/flare/catalogue?min_class=${minClass}&page_size=50`, { signal }),
+    enabled,
     staleTime: 60_000,
+    retry: engineRetry,
+    retryDelay: engineRetryDelay,
   });
 }
 
 export function useFlareDetail(id: string | null) {
+  const enabled = useEngineEnabled(!!id);
   return useQuery({
     queryKey: ['flare', id],
-    queryFn: () => api.get<FlareDetail>(`/api/flare/${id}`),
-    enabled: !!id,
+    queryFn: ({ signal }) => api.get<FlareDetail>(`/api/flare/${id}`, { signal }),
+    enabled,
     staleTime: 60_000,
+    retry: engineRetry,
+    retryDelay: engineRetryDelay,
   });
 }
 
 export function useReplayDates() {
+  const enabled = useEngineEnabled();
   return useQuery({
     queryKey: ['replayDates'],
-    queryFn: () => api.get<ReplayDates>('/api/replay/dates'),
+    queryFn: ({ signal }) => api.get<ReplayDates>('/api/replay/dates', { signal }),
+    enabled,
     staleTime: Infinity,
   });
 }
 
 export function useAlerts() {
+  const enabled = useEngineEnabled();
   return useQuery({
     queryKey: ['alerts'],
-    queryFn: () => api.get<Alert[]>('/api/alerts'),
+    queryFn: ({ signal }) => api.get<Alert[]>('/api/alerts', { signal }),
+    enabled,
     staleTime: 10_000,
     refetchInterval: 10_000,
   });
 }
 
 export function useMetrics(runId?: string) {
+  const enabled = useEngineEnabled();
   return useQuery({
     queryKey: ['metrics', runId],
-    queryFn: () => api.get<EvaluationRunDto>(runId ? `/api/metrics/${runId}` : '/api/metrics'),
+    queryFn: ({ signal }) => api.get<EvaluationRunDto>(runId ? `/api/metrics/${runId}` : '/api/metrics', { signal }),
+    enabled,
     staleTime: 60_000,
   });
 }
@@ -250,10 +334,11 @@ export function usePradanSchedule() {
 
 /** Availability probe — never triggers a fetch. */
 export function useGoesLiveStatus(enabled: boolean = true) {
+  const engineEnabled = useEngineEnabled(enabled);
   return useQuery({
     queryKey: ['goesLiveStatus'],
-    queryFn: () => api.get<GoesLiveStatus>('/api/live/goes/status'),
-    enabled,
+    queryFn: ({ signal }) => api.get<GoesLiveStatus>('/api/live/goes/status', { signal }),
+    enabled: engineEnabled,
     staleTime: 60_000,
     refetchInterval: enabled ? 60_000 : false,
   });
@@ -261,10 +346,11 @@ export function useGoesLiveStatus(enabled: boolean = true) {
 
 /** Live series + nowcast + forecast + impact in one payload. */
 export function useGoesLive(windowSize: number, enabled: boolean = true) {
+  const engineEnabled = useEngineEnabled(enabled);
   return useQuery({
     queryKey: ['goesLive', windowSize],
-    queryFn: () => api.get<GoesLivePayload>(`/api/live/goes?window=${windowSize}`),
-    enabled,
+    queryFn: ({ signal }) => api.get<GoesLivePayload>(`/api/live/goes?window=${windowSize}`, { signal }),
+    enabled: engineEnabled,
     staleTime: 60_000,
     refetchInterval: enabled ? 60_000 : false,
   });

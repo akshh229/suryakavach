@@ -16,7 +16,7 @@ import About from './components/About';
 import SeverityStrip from './components/SeverityStrip';
 import { useReplayStore } from './store/replayStore';
 import { useQueryClient } from '@tanstack/react-query';
-import { useStreams, useNowcast, useForecast, useImpact, useHealth, useReplayDates, useGoesLive, useGoesLiveStatus, useGoesRefresh } from './lib/hooks';
+import { useStreams, useNowcast, useForecast, useImpact, useHealth, useReplayDates, useGoesLive, useGoesLiveStatus, useGoesRefresh, useBackendReady } from './lib/hooks';
 import { WS_URL } from './lib/constants';
 import { useRouter, isModifiedClick } from './lib/router';
 import type { Clock, StreamsLatest, NowcastState, ForecastData, ImpactCurrent } from './types/api';
@@ -74,6 +74,7 @@ export default function App() {
   const isMobile = useIsMobile();
   const { setPlaying, setSpeed, setCursor, setEventDate, setDates, setMode } = useReplayStore();
   const queryClient = useQueryClient();
+  const backend = useBackendReady();
 
   const [windowSize, setWindowSize] = useState(120);
   const [wsConnected, setWsConnected] = useState(false);
@@ -85,6 +86,8 @@ export default function App() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<number>(1000);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const wsActiveRef = useRef(false);
 
   // TanStack Query hooks for server state (replay cache)
   const { data: streams } = useStreams(windowSize);
@@ -202,6 +205,9 @@ export default function App() {
 
   // WebSocket connection with exponential backoff
   const connectWS = useCallback(() => {
+    if (!wsActiveRef.current || wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) {
+      return;
+    }
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
 
@@ -234,7 +240,11 @@ export default function App() {
 
     ws.onclose = () => {
       setWsConnected(false);
-      setTimeout(connectWS, reconnectRef.current);
+      if (!wsActiveRef.current) return;
+      reconnectTimerRef.current = window.setTimeout(() => {
+        reconnectTimerRef.current = null;
+        connectWS();
+      }, reconnectRef.current);
       reconnectRef.current = Math.min(reconnectRef.current * 2, 30000);
     };
 
@@ -244,9 +254,17 @@ export default function App() {
   }, [setPlaying, setSpeed, setCursor, setEventDate, setDates, setMode, queryClient]);
 
   useEffect(() => {
+    if (!backend.data?.ready) return;
+    wsActiveRef.current = true;
     connectWS();
-    return () => wsRef.current?.close();
-  }, [connectWS]);
+    return () => {
+      wsActiveRef.current = false;
+      if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+      wsRef.current?.close();
+      wsRef.current = null;
+    };
+  }, [backend.data?.ready, connectWS]);
 
   const handleWindowChange = (w: number) => setWindowSize(w);
 
@@ -413,6 +431,37 @@ export default function App() {
   };
 
   const isHome = route.screen === 'home';
+
+  if (!backend.data?.ready) {
+    const failed = backend.isError;
+    return (
+      <div className="min-h-screen bg-space text-ink">
+        <NavBar wsConnected={false} mode={health?.mode ?? 'starting'} theme={isHome ? 'overlay' : 'solid'} />
+        <main id="main-content" className="min-h-[80svh] grid place-items-center px-5" aria-live="polite">
+          <section className="w-full max-w-lg rounded-2xl border border-rule bg-surface/90 p-6 shadow-xl">
+            <p className="text-[10px] uppercase tracking-[0.3em] font-mono-val text-accent-soft">Service connection</p>
+            <h1 className="mt-3 font-display text-2xl">{failed ? 'Backend unavailable' : 'Backend starting'}</h1>
+            <p className="mt-3 text-sm leading-6 text-ink-faint">
+              {failed
+                ? 'The service did not become ready. Your dashboard data has not been replaced with mock data.'
+                : 'The dashboard will reconnect automatically as the service finishes its cold start.'}
+            </p>
+            <div className="mt-5 flex items-center gap-3">
+              {!failed && <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" aria-hidden="true" />}
+              <button
+                type="button"
+                onClick={() => backend.refetch()}
+                disabled={backend.isFetching}
+                className="sk-touch rounded-full border border-rule px-4 py-2 text-xs uppercase tracking-[0.16em] hover:border-accent-soft disabled:opacity-50"
+              >
+                {backend.isFetching ? 'Checking…' : 'Try again'}
+              </button>
+            </div>
+          </section>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-space text-ink">
